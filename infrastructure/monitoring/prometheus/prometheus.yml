@@ -1,0 +1,57 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "/etc/prometheus/alerts.yml"
+
+scrape_configs:
+  # Prometheus
+  - job_name: prometheus
+    static_configs:
+      - targets: ['prometheus:9090']
+
+  # Backend (só deixe se seu backend tiver /metrics)
+  - job_name: personal-finance-backend
+    metrics_path: /metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['backend:3333']
+
+  # Redis via exporter
+  - job_name: 'redis'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Postgres via exporter
+  - job_name: 'postgres'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # MongoDB via exporter
+  - job_name: 'mongodb'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['mongodb-exporter:9216']
+
+  # Kafka via exporter
+  - job_name: 'kafka'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  # MinIO (tem endpoint nativo)
+  - job_name: 'minio'
+    metrics_path: /minio/v2/metrics/cluster
+    basic_auth:
+      username: pfh_admin
+      password: minio_secure_2024
+    static_configs:
+      - targets: ['minio:9000']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []

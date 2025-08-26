@@ -1,31 +1,595 @@
-version: "3.9"
 services:
-  mongo:
-    image: bitnami/mongodb:7.0
+  # PostgreSQL - Write Database (Master)
+  postgres-master:
+    image: postgres:16-alpine
+    container_name: pfh-postgres-master
     environment:
-      - MONGODB_REPLICA_SET_MODE=primary
-      - MONGODB_REPLICA_SET_KEY=rs-key
-      - MONGODB_ROOT_PASSWORD=admin
-      - MONGODB_USERNAME=app
-      - MONGODB_PASSWORD=app
-      - MONGODB_DATABASE=pfh
-    ports: ["27017:27017"]
-    volumes: ["mongo_data:/bitnami/mongodb"]
+      POSTGRES_DB: personal_finance
+      POSTGRES_USER: pfh_admin
+      POSTGRES_PASSWORD: pfh_secure_2024
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: repl_secure_2024
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_master_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/configs/postgres-master.conf:/etc/postgresql/postgresql.conf
+      - ./backend/src/infrastructure/database/postgres/migrations:/docker-entrypoint-initdb.d
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pfh_admin -d personal_finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pfh-network
 
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-
-  kafka:
-    image: bitnami/kafka:3.7
+  # PostgreSQL - Read Replica
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: pfh-postgres-replica
     environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-    ports: ["9092:9092"]
+      POSTGRES_DB: personal_finance
+      POSTGRES_USER: pfh_admin
+      POSTGRES_PASSWORD: pfh_secure_2024
+      PGUSER: pfh_admin
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/configs/postgres-replica.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pfh_admin -d personal_finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pfh-network
 
+  # MongoDB - Read Database (Replica Set)
+  mongo-primary:
+    image: mongo:7.0
+    container_name: pfh-mongo-primary
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: pfh_admin
+      MONGO_INITDB_ROOT_PASSWORD: mongo_secure_2024
+      MONGO_INITDB_DATABASE: personal_finance_read
+    volumes:
+      - mongo_primary_data:/data/db
+    command: mongod --bind_ip_all
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pfh-network
+
+  mongo-secondary-1:
+    image: mongo:7.0
+    container_name: pfh-mongo-secondary-1
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: pfh_admin
+      MONGO_INITDB_ROOT_PASSWORD: mongo_secure_2024
+    volumes:
+      - mongo_secondary1_data:/data/db
+    command: mongod --bind_ip_all
+    depends_on:
+      mongo-primary:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  mongo-secondary-2:
+    image: mongo:7.0
+    container_name: pfh-mongo-secondary-2
+    ports:
+      - "27019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: pfh_admin
+      MONGO_INITDB_ROOT_PASSWORD: mongo_secure_2024
+    volumes:
+      - mongo_secondary2_data:/data/db
+    command: mongod --bind_ip_all
+    depends_on:
+      mongo-primary:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  # Redis - Cache & Session Store (Cluster Mode)
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: pfh-redis-master
+    ports:
+      - "6379:6379"
+    environment:
+      REDIS_REPLICATION_MODE: master
+      REDIS_PASSWORD: redis_secure_2024
+    volumes:
+      - redis_master_data:/data
+      - ./infrastructure/docker/configs/redis-master.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pfh-network
+
+  redis-replica:
+    image: redis:7.2-alpine
+    container_name: pfh-redis-replica
+    ports:
+      - "6380:6379"
+    environment:
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-master
+      REDIS_MASTER_PORT_NUMBER: 6379
+      REDIS_PASSWORD: redis_secure_2024
+      REDIS_MASTER_PASSWORD: redis_secure_2024
+    volumes:
+      - redis_replica_data:/data
+      - ./infrastructure/docker/configs/redis-replica.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  # Zookeeper - Kafka Coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: pfh-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 10
+      ZOOKEEPER_SYNC_LIMIT: 5
+      ZOOKEEPER_MAX_CLIENT_CNXNS: 60
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pfh-network
+
+  # Kafka - Event Streaming Platform
+  kafka-1:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: pfh-kafka-1
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: false
+      KAFKA_DELETE_TOPIC_ENABLE: true
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    volumes:
+      - kafka1_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - pfh-network
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: pfh-kafka-2
+    ports:
+      - "9093:9093"
+      - "9102:9102"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:29093,PLAINTEXT_HOST://localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9102
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: false
+    volumes:
+      - kafka2_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: pfh-kafka-3
+    ports:
+      - "9094:9094"
+      - "9103:9103"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:29094,PLAINTEXT_HOST://localhost:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9103
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: false
+    volumes:
+      - kafka3_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  # Kafka UI - Management Interface
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: pfh-kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: personal-finance-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: true
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_started
+      kafka-3:
+        condition: service_started
+    networks:
+      - pfh-network
+
+  # MinIO - Object Storage (S3 Compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: pfh-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: pfh_admin
+      MINIO_ROOT_PASSWORD: minio_secure_2024
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - pfh-network
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pfh-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/monitoring/alerting/alerts.yml:/etc/prometheus/alerts.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - pfh-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.61.0
+    container_name: pfh-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis-master:6379
+      REDIS_PASSWORD: redis_secure_2024
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis-master
+    networks:
+      - pfh-network
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: pfh-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://pfh_admin:pfh_secure_2024@postgres-master:5432/personal_finance?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.43.0
+    container_name: pfh-mongodb-exporter
+    command:
+      - --mongodb.uri=mongodb://pfh_admin:mongo_secure_2024@mongo-primary:27017/admin?authSource=admin
+      - --collector.dbstats
+      - --collector.collstats
+      - --collector.topmetrics
+      - --collector.indexstats
+      - --discovering-mode
+    ports:
+      - "9216:9216"
+    depends_on:
+      mongo-primary:
+        condition: service_healthy
+    networks:
+      - pfh-network
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: pfh-kafka-exporter
+    command:
+      - --kafka.server=kafka-1:29092
+      - --kafka.server=kafka-2:29093
+      - --kafka.server=kafka-3:29094
+    ports:
+      - "9308:9308"
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    networks:
+      - pfh-network
+
+  # Grafana - Metrics Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pfh-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: grafana_secure_2024
+      GF_USERS_ALLOW_SIGN_UP: false
+      GF_SECURITY_COOKIE_SECURE: true
+      GF_SECURITY_COOKIE_SAMESITE: strict
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - pfh-network
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: pfh-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+      - ./infrastructure/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - pfh-network
+
+  # Promtail - Log Shipper
+  promtail:
+    image: grafana/promtail:latest
+    container_name: pfh-promtail
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./infrastructure/monitoring/promtail/promtail-config.yaml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - pfh-network
+
+  # Jaeger - Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: pfh-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    networks:
+      - pfh-network
+
+  # Nginx - Reverse Proxy & Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: pfh-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/docker/configs/nginx.conf:/etc/nginx/nginx.conf
+      - ./infrastructure/docker/ssl:/etc/nginx/ssl
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - pfh-network
+
+  # Backend Application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: pfh-backend
+    ports:
+      - "3333:3333"
+      - "9229:9229"  # Debug port
+    environment:
+      NODE_ENV: development
+      PORT: 3333
+      
+      # PostgreSQL Write
+      POSTGRES_HOST: postgres-master
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: personal_finance
+      POSTGRES_USER: pfh_admin
+      POSTGRES_PASSWORD: pfh_secure_2024
+      
+      # PostgreSQL Read
+      POSTGRES_READ_HOST: postgres-replica
+      POSTGRES_READ_PORT: 5432
+      
+      # MongoDB
+      MONGODB_URI: mongodb://pfh_admin:mongo_secure_2024@mongo-primary:27017,mongo-secondary-1:27017,mongo-secondary-2:27017/personal_finance_read?replicaSet=rs0&authSource=admin
+      
+      # Redis
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secure_2024
+      REDIS_READ_HOST: redis-replica
+      
+      # Kafka
+      KAFKA_BROKERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+      
+      # MinIO
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: pfh_admin
+      MINIO_SECRET_KEY: minio_secure_2024
+      
+      # JWT
+      JWT_SECRET: your_super_secure_jwt_secret_change_in_production
+      JWT_REFRESH_SECRET: your_super_secure_refresh_secret_change_in_production
+      
+      # Monitoring
+      PROMETHEUS_ENDPOINT: http://prometheus:9090
+      JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      mongo-primary:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - pfh-network
+    command: npm run dev
+
+  # Frontend Application  
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: pfh-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3333/api
+      NEXT_PUBLIC_WS_URL: ws://localhost:3333
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - pfh-network
+    command: npm run dev
+
+# Networks
+networks:
+  pfh-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
 volumes:
-  mongo_data:
+  postgres_master_data:
+    driver: local
+  postgres_replica_data:
+    driver: local
+  mongo_primary_data:
+    driver: local
+  mongo_secondary1_data:
+    driver: local
+  mongo_secondary2_data:
+    driver: local
+  redis_master_data:
+    driver: local
+  redis_replica_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_logs:
+    driver: local
+  kafka1_data:
+    driver: local
+  kafka2_data:
+    driver: local
+  kafka3_data:
+    driver: local
+  minio_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local

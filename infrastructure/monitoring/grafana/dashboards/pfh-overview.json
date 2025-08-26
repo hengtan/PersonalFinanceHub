@@ -1,0 +1,245 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 1,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Health Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{ "expr": "max(up{job=\"prometheus\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "PostgreSQL Exporter",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "max(up{job=\"postgres\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "Redis Exporter",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "max(up{job=\"redis\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "MongoDB Exporter",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "max(up{job=\"mongodb\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "Kafka Exporter",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "max(up{job=\"kafka\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "MinIO",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "max(up{job=\"minio\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+
+    {
+      "type": "row",
+      "title": "PostgreSQL",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "panels": []
+    },
+    {
+      "type": "timeSeries",
+      "title": "PG: Conexões (por instance)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [{
+        "expr": "sum by (instance) (pg_stat_database_numbackends)"
+      }],
+      "options": { "legend": { "displayMode": "table", "placement": "right" } },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "timeSeries",
+      "title": "PG: TPS (commits + rollbacks)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [{
+        "expr": "sum by (instance) (rate(pg_stat_database_xact_commit[5m]) + rate(pg_stat_database_xact_rollback[5m]))"
+      }],
+      "options": { "legend": { "displayMode": "table", "placement": "right" } },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+
+    {
+      "type": "row",
+      "title": "Redis",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "panels": []
+    },
+    {
+      "type": "timeSeries",
+      "title": "Redis: Ops/s",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [{ "expr": "sum by (instance) (rate(redis_commands_processed_total[5m]))" }],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "timeSeries",
+      "title": "Redis: Memória Usada",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [{ "expr": "max by (instance) (redis_memory_used_bytes)" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+
+    {
+      "type": "row",
+      "title": "Kafka",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Kafka: Brokers Detectados",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 24 },
+      "targets": [{ "expr": "max(kafka_brokers)" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "timeSeries",
+      "title": "Kafka: Lag por Consumer Group (Top 5)",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 24 },
+      "targets": [{
+        "expr": "topk(5, sum by (consumergroup) (kafka_consumergroup_lag))"
+      }],
+      "options": { "legend": { "displayMode": "table", "placement": "right" } },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+
+    {
+      "type": "row",
+      "title": "MongoDB / MinIO",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "panels": []
+    },
+    {
+      "type": "timeSeries",
+      "title": "MongoDB: Conexões",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "targets": [{ "expr": "max by (instance) (mongodb_connections)" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    },
+    {
+      "type": "stat",
+      "title": "MinIO: UP",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "targets": [{ "expr": "max(up{job=\"minio\"})" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["pfh", "overview"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PFH - Overview",
+  "version": 1,
+  "weekStart": ""
+}
