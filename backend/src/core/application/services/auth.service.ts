@@ -11,10 +11,12 @@ export interface LoginCredentials {
 }
 
 export interface RegisterData {
-    name: string;
+    firstName: string;
+    lastName: string;
     email: string;
     password: string;
     confirmPassword?: string;
+    acceptTerms: boolean;
 }
 
 export interface TokenPair {
@@ -25,7 +27,8 @@ export interface TokenPair {
 export interface AuthUser {
     id: string;
     email: string;
-    name: string;
+    firstName: string;
+    lastName: string;
     isActive: boolean;
 }
 
@@ -110,7 +113,8 @@ export class AuthService {
             const user: AuthUser = {
                 id: Math.random().toString(36).substr(2, 9),
                 email: userData.email,
-                name: userData.name,
+                firstName: userData.firstName,
+                lastName: userData.lastName,
                 isActive: true
             };
 
@@ -227,10 +231,20 @@ export class AuthService {
     private validateRegistrationData(userData: RegisterData): void {
         const errors: Array<{ field: string; message: string }> = [];
 
-        if (!userData.name) {
-            errors.push({ field: 'name', message: 'Name is required' });
-        } else if (userData.name.length < 2) {
-            errors.push({ field: 'name', message: 'Name must be at least 2 characters' });
+        if (!userData.firstName) {
+            errors.push({ field: 'firstName', message: 'First name is required' });
+        } else if (userData.firstName.length < 2) {
+            errors.push({ field: 'firstName', message: 'First name must be at least 2 characters' });
+        }
+
+        if (!userData.lastName) {
+            errors.push({ field: 'lastName', message: 'Last name is required' });
+        } else if (userData.lastName.length < 2) {
+            errors.push({ field: 'lastName', message: 'Last name must be at least 2 characters' });
+        }
+
+        if (!userData.acceptTerms) {
+            errors.push({ field: 'acceptTerms', message: 'You must accept the terms and conditions' });
         }
 
         if (!userData.email) {

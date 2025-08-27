@@ -14,10 +14,12 @@ interface LoginRequest {
 }
 
 interface RegisterRequest {
-    name: string;
+    firstName: string;
+    lastName: string;
     email: string;
     password: string;
     confirmPassword?: string;
+    acceptTerms: boolean;
 }
 
 interface RefreshTokenRequest {

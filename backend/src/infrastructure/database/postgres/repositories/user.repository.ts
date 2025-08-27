@@ -1,11 +1,12 @@
 import { Repository, DataSource } from 'typeorm';
 import { UserRepository, User, CreateUserData, UpdateUserData } from '../../../../core/domain/repositories/user.repository';
 import { UserPostgresEntity } from '../entities/user.entity';
-import { DatabaseException } from '../../../../shared/exceptions/infrastructure.exception';
-import { logger } from '../../../../infrastructure/monitoring/logger.service';
+import { DatabaseException } from '../../../../shared/exceptions/base.exception';
+import { Logger } from '../../../../shared/utils/logger.util';
 
 export class UserRepositoryImpl implements UserRepository {
     private readonly repository: Repository<UserPostgresEntity>;
+    private readonly logger = Logger.createChildLogger('UserRepository');
 
     constructor(private readonly dataSource: DataSource) {
         this.repository = this.dataSource.getRepository(UserPostgresEntity);
@@ -20,7 +21,7 @@ export class UserRepositoryImpl implements UserRepository {
 
             return entity ? this.toDomain(entity) : null;
         } catch (error) {
-            logger.error('Error finding user by id', { id, error: error.message });
+            this.logger.error('Error finding user by id', error, { id });
             throw new DatabaseException(`Erro ao buscar usuário por ID: ${error.message}`);
         }
     }
@@ -34,7 +35,7 @@ export class UserRepositoryImpl implements UserRepository {
 
             return entity ? this.toDomain(entity) : null;
         } catch (error) {
-            logger.error('Error finding user by email', { email, error: error.message });
+            this.logger.error('Error finding user by email', error, { email });
             throw new DatabaseException(`Erro ao buscar usuário por email: ${error.message}`);
         }
     }
@@ -48,7 +49,7 @@ export class UserRepositoryImpl implements UserRepository {
 
             return entity ? this.toDomain(entity) : null;
         } catch (error) {
-            logger.error('Error finding user by cpf', { cpf, error: error.message });
+            this.logger.error('Error finding user by cpf', error, { cpf });
             throw new DatabaseException(`Erro ao buscar usuário por CPF: ${error.message}`);
         }
     }
@@ -84,16 +85,15 @@ export class UserRepositoryImpl implements UserRepository {
 
             const savedEntity = await this.repository.save(entity);
 
-            logger.info('User created successfully', {
+            this.logger.info('User created successfully', {
                 userId: savedEntity.id,
                 email: savedEntity.email
             });
 
             return this.toDomain(savedEntity);
         } catch (error) {
-            logger.error('Error creating user', {
-                email: data.email,
-                error: error.message
+            this.logger.error('Error creating user', error, {
+                email: data.email
             });
 
             if (error.code === '23505') { // Unique constraint violation
@@ -130,11 +130,11 @@ export class UserRepositoryImpl implements UserRepository {
 
             const savedEntity = await this.repository.save(existingEntity);
 
-            logger.info('User updated successfully', { userId: id });
+            this.logger.info('User updated successfully', { userId: id });
 
             return this.toDomain(savedEntity);
         } catch (error) {
-            logger.error('Error updating user', { userId: id, error: error.message });
+            this.logger.error('Error updating user', error, { userId: id });
             throw new DatabaseException(`Erro ao atualizar usuário: ${error.message}`);
         }
     }
@@ -147,9 +147,9 @@ export class UserRepositoryImpl implements UserRepository {
                 throw new DatabaseException('Usuário não encontrado');
             }
 
-            logger.info('User deleted successfully', { userId: id });
+            this.logger.info('User deleted successfully', { userId: id });
         } catch (error) {
-            logger.error('Error deleting user', { userId: id, error: error.message });
+            this.logger.error('Error deleting user', error, { userId: id });
             throw new DatabaseException(`Erro ao deletar usuário: ${error.message}`);
         }
     }
@@ -162,9 +162,9 @@ export class UserRepositoryImpl implements UserRepository {
                 throw new DatabaseException('Usuário não encontrado');
             }
 
-            logger.info('User activated successfully', { userId: id });
+            this.logger.info('User activated successfully', { userId: id });
         } catch (error) {
-            logger.error('Error activating user', { userId: id, error: error.message });
+            this.logger.error('Error activating user', error, { userId: id });
             throw new DatabaseException(`Erro ao ativar usuário: ${error.message}`);
         }
     }
@@ -177,9 +177,9 @@ export class UserRepositoryImpl implements UserRepository {
                 throw new DatabaseException('Usuário não encontrado');
             }
 
-            logger.info('User deactivated successfully', { userId: id });
+            this.logger.info('User deactivated successfully', { userId: id });
         } catch (error) {
-            logger.error('Error deactivating user', { userId: id, error: error.message });
+            this.logger.error('Error deactivating user', error, { userId: id });
             throw new DatabaseException(`Erro ao desativar usuário: ${error.message}`);
         }
     }
@@ -192,9 +192,9 @@ export class UserRepositoryImpl implements UserRepository {
                 throw new DatabaseException('Usuário não encontrado');
             }
 
-            logger.debug('User last login updated', { userId: id });
+            this.logger.debug('User last login updated', { userId: id });
         } catch (error) {
-            logger.error('Error updating user last login', { userId: id, error: error.message });
+            this.logger.error('Error updating user last login', error, { userId: id });
             throw new DatabaseException(`Erro ao atualizar último login: ${error.message}`);
         }
     }
@@ -251,7 +251,7 @@ export class UserRepositoryImpl implements UserRepository {
                 total
             };
         } catch (error) {
-            logger.error('Error finding many users', { filters, pagination, error: error.message });
+            this.logger.error('Error finding many users', error, { filters, pagination });
             throw new DatabaseException(`Erro ao buscar usuários: ${error.message}`);
         }
     }

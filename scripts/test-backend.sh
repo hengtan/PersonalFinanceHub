@@ -44,9 +44,11 @@ test_registration() {
     local email="test-$(date +%s)@example.com"
     local payload='{
         "email": "'$email'",
-        "password": "TestPassword123",
+        "password": "TestPassword123!",
+        "confirmPassword": "TestPassword123!",
         "firstName": "Test",
-        "lastName": "User"
+        "lastName": "User",
+        "acceptTerms": true
     }'
 
     response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
@@ -77,7 +79,7 @@ test_login() {
 
     local payload='{
         "email": "'$TEST_EMAIL'",
-        "password": "TestPassword123"
+        "password": "TestPassword123!"
     }'
 
     response=$(curl -s -w "HTTPSTATUS:%{http_code}" \

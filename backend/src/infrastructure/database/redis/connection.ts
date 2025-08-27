@@ -1,4 +1,10 @@
-// Redis Connection
+import { createClient, RedisClientType } from 'redis';
+import { Logger } from '../../../shared/utils/logger.util';
+
+const logger = Logger.createChildLogger('Redis');
+
+let redisClient: RedisClientType | null = null;
+
 export async function connectRedis(): Promise<RedisClientType> {
     const config = {
         socket: {
@@ -41,4 +47,28 @@ export async function connectRedis(): Promise<RedisClientType> {
         logger.error({ error, config: { ...config, password: '[HIDDEN]' } }, 'Failed to connect to Redis');
         throw error;
     }
+}
+
+export async function getRedisClient(): Promise<RedisClientType> {
+    if (!redisClient) {
+        redisClient = await connectRedis();
+    }
+    return redisClient;
+}
+
+export async function disconnectRedis(): Promise<void> {
+    if (redisClient) {
+        try {
+            await redisClient.quit();
+            logger.info('Redis connection closed gracefully');
+        } catch (error) {
+            logger.error('Error closing Redis connection', error);
+        } finally {
+            redisClient = null;
+        }
+    }
+}
+
+export function isRedisConnected(): boolean {
+    return redisClient?.isOpen || false;
 }
