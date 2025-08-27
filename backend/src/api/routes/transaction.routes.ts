@@ -62,7 +62,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
                 }
             }
         }
-    }, transactionController.createTransaction.bind(transactionController));
+    }, transactionController.create.bind(transactionController));
 
     // List transactions
     fastify.get('/', {
@@ -91,7 +91,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
                 }
             }
         }
-    }, transactionController.listTransactions.bind(transactionController));
+    }, transactionController.list.bind(transactionController));
 
     // Get transaction by ID
     fastify.get('/:id', {
@@ -112,7 +112,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
                 }
             }
         }
-    }, transactionController.getTransaction.bind(transactionController));
+    }, transactionController.getById.bind(transactionController));
 
     // Update transaction
     fastify.put('/:id', {
@@ -145,7 +145,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
                 }
             }
         }
-    }, transactionController.updateTransaction.bind(transactionController));
+    }, transactionController.update.bind(transactionController));
 
     // Delete transaction
     fastify.delete('/:id', {
@@ -166,7 +166,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
                 }
             }
         }
-    }, transactionController.deleteTransaction.bind(transactionController));
+    }, transactionController.delete.bind(transactionController));
 
     // Transaction statistics
     fastify.get('/stats/summary', {
@@ -226,3 +226,5 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
 
     routeContext.info('Transaction routes registered successfully');
 }
+
+export default transactionRoutes;

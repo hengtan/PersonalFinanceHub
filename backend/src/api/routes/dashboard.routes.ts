@@ -240,3 +240,5 @@ export default async function dashboardRoutes(fastify: FastifyInstance) {
 
     routeContext.info('Dashboard routes registered successfully');
 }
+
+export default dashboardRoutes;

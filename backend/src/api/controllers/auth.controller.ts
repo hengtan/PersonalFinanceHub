@@ -129,7 +129,10 @@ export class AuthFastifyController {
                 success: true,
                 data: {
                     user: result.user,
-                    accessToken: result.tokens.accessToken,
+                    tokens: {
+                        accessToken: result.tokens.accessToken,
+                        refreshToken: result.tokens.refreshToken
+                    },
                     expiresIn: process.env.JWT_EXPIRES_IN || '15m'
                 }
             });

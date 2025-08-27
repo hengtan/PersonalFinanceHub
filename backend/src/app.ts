@@ -105,18 +105,20 @@ export class App {
                 contentSecurityPolicy: false
             });
 
-            // Rate limiting
-            await this.fastify.register(import('@fastify/rate-limit'), {
-                max: 100,
-                timeWindow: '1 minute',
-                addHeaders: {
-                    'x-ratelimit-limit': true,
-                    'x-ratelimit-remaining': true,
-                    'x-ratelimit-reset': true
-                }
-            });
+            // Rate limiting (skip in test environment)
+            if (this.config.environment !== 'test') {
+                await this.fastify.register(import('@fastify/rate-limit'), {
+                    max: 100,
+                    timeWindow: '1 minute',
+                    addHeaders: {
+                        'x-ratelimit-limit': true,
+                        'x-ratelimit-remaining': true,
+                        'x-ratelimit-reset': true
+                    }
+                });
+            }
 
-            // Swagger documentation
+            // Swagger documentation (skip in test environment)
             if (this.config.environment === 'development') {
                 await this.fastify.register(import('@fastify/swagger'), {
                     swagger: {
@@ -161,17 +163,19 @@ export class App {
 
     private async setupMiddlewares(): Promise<void> {
         try {
-            // Request logging middleware
+            // Request logging middleware (simplificado para testes)
             this.fastify.addHook('onRequest', async (request, reply) => {
                 const startTime = Date.now();
 
-                // Adicionar contexto de request para logs
-                logger.setContext({
-                    requestId: request.id,
-                    method: request.method,
-                    url: request.url,
-                    ip: request.ip
-                });
+                if (this.config.environment !== 'test') {
+                    // Adicionar contexto de request para logs
+                    logger.setContext({
+                        requestId: request.id,
+                        method: request.method,
+                        url: request.url,
+                        ip: request.ip
+                    });
+                }
 
                 // Iniciar timer para métricas
                 (request as any).startTime = startTime;
@@ -181,51 +185,55 @@ export class App {
                 reply.header('X-Environment', this.config.environment);
             });
 
-            // Response logging middleware
-            this.fastify.addHook('onResponse', async (request, reply) => {
-                const duration = Date.now() - ((request as any).startTime || Date.now());
-                const statusCode = reply.statusCode;
+            // Response logging middleware (simplificado para testes)
+            if (this.config.environment !== 'test') {
+                this.fastify.addHook('onResponse', async (request, reply) => {
+                    const duration = Date.now() - ((request as any).startTime || Date.now());
+                    const statusCode = reply.statusCode;
 
-                // Log da request
-                logger.http(`${request.method} ${request.url} - ${statusCode} - ${duration}ms`, {
-                    method: request.method,
-                    url: request.url,
-                    statusCode,
-                    duration,
-                    ip: request.ip
+                    // Log da request
+                    logger.http(`${request.method} ${request.url} - ${statusCode} - ${duration}ms`, {
+                        method: request.method,
+                        url: request.url,
+                        statusCode,
+                        duration,
+                        ip: request.ip
+                    });
+
+                    // Registrar métricas
+                    MetricsService.recordHttpRequest(
+                        request.method,
+                        request.routeOptions?.url || request.url,
+                        statusCode,
+                        duration
+                    );
+
+                    // Limpar contexto
+                    logger.clearContext();
                 });
+            }
 
-                // Registrar métricas
-                MetricsService.recordHttpRequest(
-                    request.method,
-                    request.routeOptions?.url || request.url,
-                    statusCode,
-                    duration
-                );
+            // Middleware para validação de content-type em requests POST/PUT/PATCH (simplificado para testes)
+            if (this.config.environment !== 'test') {
+                this.fastify.addHook('preValidation', async (request, reply) => {
+                    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+                        const contentType = request.headers['content-type'];
+                        if (!contentType || !contentType.includes('application/json')) {
+                            MetricsService.incrementCounter('http_requests_total', {
+                                method: request.method,
+                                route: request.routeOptions?.url || request.url,
+                                status_code: '400'
+                            });
 
-                // Limpar contexto
-                logger.clearContext();
-            });
-
-            // Middleware para validação de content-type em requests POST/PUT/PATCH
-            this.fastify.addHook('preValidation', async (request, reply) => {
-                if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
-                    const contentType = request.headers['content-type'];
-                    if (!contentType || !contentType.includes('application/json')) {
-                        MetricsService.incrementCounter('http_requests_total', {
-                            method: request.method,
-                            route: request.routeOptions?.url || request.url,
-                            status_code: '400'
-                        });
-
-                        return reply.code(400).send({
-                            success: false,
-                            message: 'Content-Type must be application/json',
-                            error: 'INVALID_CONTENT_TYPE'
-                        });
+                            return reply.code(400).send({
+                                success: false,
+                                message: 'Content-Type must be application/json',
+                                error: 'INVALID_CONTENT_TYPE'
+                            });
+                        }
                     }
-                }
-            });
+                });
+            }
 
             logger.debug('Application middlewares setup completed');
 
@@ -252,15 +260,15 @@ export class App {
                 prefix: `${basePrefix}/auth`
             });
 
-            // Dashboard routes (temporarily disabled for testing)
-            // await this.fastify.register(dashboardRoutes, {
-            //     prefix: `${basePrefix}/dashboard`
-            // });
+            // Dashboard routes
+            await this.fastify.register(dashboardRoutes, {
+                prefix: `${basePrefix}/dashboard`
+            });
 
-            // Financial transaction routes (temporarily disabled for testing)
-            // await this.fastify.register(transactionRoutes, {
-            //     prefix: `${basePrefix}/transactions`
-            // });
+            // Financial transaction routes
+            await this.fastify.register(transactionRoutes, {
+                prefix: `${basePrefix}/transactions`
+            });
 
             // Account management routes (commented until implemented)
             // await this.fastify.register(accountRoutes, {

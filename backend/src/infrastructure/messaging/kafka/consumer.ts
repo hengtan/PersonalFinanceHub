@@ -1,7 +1,8 @@
 import { Kafka, Consumer, ConsumerRunConfig, EachMessagePayload } from 'kafkajs';
-import { logger } from '../../../infrastructure/monitoring/logger.service';
-import { MessagingException } from '../../../shared/exceptions/infrastructure.exception';
-import { config } from '../../../config/environment';
+import { Logger } from '../../../shared/utils/logger.util';
+import { MessagingException } from '../../../shared/exceptions/base.exception';
+import { KAFKA_TOPICS, KAFKA_CONSUMER_GROUPS, KafkaEvent, SyncToMongoEvent, CacheInvalidationEvent } from './topics';
+import { InboxService } from '../../patterns/inbox.service';
 
 export interface MessageHandler {
     handle(payload: EachMessagePayload): Promise<void>;
@@ -12,11 +13,15 @@ export class KafkaConsumerService {
     private readonly consumer: Consumer;
     private readonly handlers: Map<string, MessageHandler[]> = new Map();
     private isRunning: boolean = false;
+    private readonly logger = Logger.createChildLogger('KafkaConsumer');
+    private readonly inboxService: InboxService;
 
     constructor(groupId: string) {
+        const brokers = process.env.KAFKA_BROKERS?.split(',') || ['localhost:9092'];
+        
         this.kafka = new Kafka({
             clientId: `personal-finance-hub-consumer-${groupId}`,
-            brokers: config.get('KAFKA_BROKERS'),
+            brokers,
             retry: {
                 initialRetryTime: 100,
                 retries: 8
@@ -33,6 +38,8 @@ export class KafkaConsumerService {
             maxBytes: 10485760,
             maxWaitTimeInMs: 5000
         });
+
+        this.inboxService = InboxService.getInstance();
     }
 
     registerHandler(topic: string, handler: MessageHandler): void {
@@ -40,7 +47,7 @@ export class KafkaConsumerService {
         existingHandlers.push(handler);
         this.handlers.set(topic, existingHandlers);
 
-        logger.debug('Message handler registered', {
+        this.this.logger.debug('Message handler registered', {
             topic,
             handlerName: handler.constructor.name,
             totalHandlers: existingHandlers.length
@@ -50,9 +57,9 @@ export class KafkaConsumerService {
     async connect(): Promise<void> {
         try {
             await this.consumer.connect();
-            logger.info('Kafka consumer connected successfully');
+            this.this.logger.info('Kafka consumer connected successfully');
         } catch (error) {
-            logger.error('Failed to connect Kafka consumer', { error: error.message });
+            this.logger.error('Failed to connect Kafka consumer', { error: error.message });
             throw new MessagingException(`Erro ao conectar consumer do Kafka: ${error.message}`);
         }
     }
@@ -61,10 +68,10 @@ export class KafkaConsumerService {
         try {
             for (const topic of topics) {
                 await this.consumer.subscribe({ topic, fromBeginning: false });
-                logger.info('Subscribed to Kafka topic', { topic });
+                this.logger.info('Subscribed to Kafka topic', { topic });
             }
         } catch (error) {
-            logger.error('Error subscribing to topics', { topics, error: error.message });
+            this.logger.error('Error subscribing to topics', { topics, error: error.message });
             throw new MessagingException(`Erro ao se inscrever nos tópicos: ${error.message}`);
         }
     }
@@ -72,7 +79,7 @@ export class KafkaConsumerService {
     async start(): Promise<void> {
         try {
             if (this.isRunning) {
-                logger.warn('Kafka consumer is already running');
+                this.logger.warn('Kafka consumer is already running');
                 return;
             }
 
@@ -85,9 +92,9 @@ export class KafkaConsumerService {
             await this.consumer.run(config);
             this.isRunning = true;
 
-            logger.info('Kafka consumer started successfully');
+            this.logger.info('Kafka consumer started successfully');
         } catch (error) {
-            logger.error('Error starting Kafka consumer', { error: error.message });
+            this.logger.error('Error starting Kafka consumer', { error: error.message });
             throw new MessagingException(`Erro ao iniciar consumer do Kafka: ${error.message}`);
         }
     }
@@ -95,16 +102,16 @@ export class KafkaConsumerService {
     async stop(): Promise<void> {
         try {
             if (!this.isRunning) {
-                logger.warn('Kafka consumer is not running');
+                this.logger.warn('Kafka consumer is not running');
                 return;
             }
 
             await this.consumer.stop();
             this.isRunning = false;
 
-            logger.info('Kafka consumer stopped');
+            this.logger.info('Kafka consumer stopped');
         } catch (error) {
-            logger.error('Error stopping Kafka consumer', { error: error.message });
+            this.logger.error('Error stopping Kafka consumer', { error: error.message });
         }
     }
 
@@ -112,9 +119,9 @@ export class KafkaConsumerService {
         try {
             await this.stop();
             await this.consumer.disconnect();
-            logger.info('Kafka consumer disconnected');
+            this.logger.info('Kafka consumer disconnected');
         } catch (error) {
-            logger.error('Error disconnecting Kafka consumer', { error: error.message });
+            this.logger.error('Error disconnecting Kafka consumer', { error: error.message });
         }
     }
 
@@ -126,7 +133,7 @@ export class KafkaConsumerService {
             const messageKey = message.key?.toString();
             const headers = this.extractHeaders(message.headers);
 
-            logger.debug('Processing Kafka message', {
+            this.logger.debug('Processing Kafka message', {
                 topic,
                 partition,
                 offset: message.offset,
@@ -138,7 +145,7 @@ export class KafkaConsumerService {
             const handlers = this.handlers.get(topic) || [];
 
             if (handlers.length === 0) {
-                logger.warn('No handlers found for topic', { topic });
+                this.logger.warn('No handlers found for topic', { topic });
                 return;
             }
 
@@ -147,13 +154,13 @@ export class KafkaConsumerService {
                 try {
                     await handler.handle(payload);
 
-                    logger.debug('Message processed successfully by handler', {
+                    this.logger.debug('Message processed successfully by handler', {
                         topic,
                         handlerName: handler.constructor.name,
                         eventId: headers.eventId
                     });
                 } catch (error) {
-                    logger.error('Error processing message with handler', {
+                    this.logger.error('Error processing message with handler', {
                         topic,
                         handlerName: handler.constructor.name,
                         eventId: headers.eventId,
@@ -169,7 +176,7 @@ export class KafkaConsumerService {
             await Promise.allSettled(promises);
 
         } catch (error) {
-            logger.error('Error processing Kafka message', {
+            this.logger.error('Error processing Kafka message', {
                 topic,
                 partition,
                 offset: message.offset,

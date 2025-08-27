@@ -372,3 +372,5 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     routeContext.info('Auth routes registered successfully');
 }
+
+export default authRoutes;

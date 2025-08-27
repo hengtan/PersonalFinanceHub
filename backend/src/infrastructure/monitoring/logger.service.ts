@@ -28,12 +28,20 @@ export enum LogLevel {
     FATAL = 'fatal'
 }
 
-class LoggerService {
+export class LoggerService {
+    private static instance: LoggerService;
     private logger: Logger;
     private context: LogContext = {};
 
-    constructor() {
+    private constructor() {
         this.logger = this.createLogger();
+    }
+
+    static getInstance(): LoggerService {
+        if (!LoggerService.instance) {
+            LoggerService.instance = new LoggerService();
+        }
+        return LoggerService.instance;
     }
 
     private createLogger(): Logger {
@@ -102,6 +110,10 @@ class LoggerService {
         this.logger.debug(this.formatMessage(message, meta));
     }
 
+    verbose(message: string, meta?: LogMeta): void {
+        this.logger.debug(this.formatMessage(message, meta)); // Using debug level for verbose
+    }
+
     info(message: string, meta?: LogMeta): void {
         this.logger.info(this.formatMessage(message, meta));
     }
@@ -166,7 +178,7 @@ class LoggerService {
 
     // Método para criar child logger com contexto específico
     child(context: LogContext): LoggerService {
-        const childLogger = new LoggerService();
+        const childLogger = LoggerService.getInstance();
         childLogger.context = { ...this.context, ...context };
         return childLogger;
     }
@@ -231,7 +243,7 @@ class LoggerService {
 }
 
 // Singleton instance
-export const logger = new LoggerService();
+export const logger = LoggerService.getInstance();
 
 // Export da classe para casos onde precisamos de instâncias específicas
 export { LoggerService };
