@@ -1,265 +1,345 @@
-// backend/src/api/controllers/auth.controller.ts
-
-import { Request, Response } from 'express';
+// backend/src/api/controllers/auth.fastify.controller.ts
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { AuthService } from '../../core/application/services/auth.service';
 import { LoginUserUseCase } from '../../core/application/use-cases/auth/login-user.use-case';
-import { RegisterUserUseCase } from '../../application/use-cases/auth/register-user.use-case';
-import { RefreshTokenUseCase } from '../../application/use-cases/auth/refresh-token.use-case';
-import { CacheService } from '../../infrastructure/database/redis/cache.service';
-import { logger } from '../../shared/utils/logger.util';
+import { logger } from '../../infrastructure/monitoring/logger.service';
 import { ValidationException } from '../../shared/exceptions/validation.exception';
 import { BusinessException } from '../../shared/exceptions/business.exception';
-import { HTTP_STATUS } from '../../shared/constants/status-codes';
+import { cacheService } from '../../infrastructure/database/redis/cache.service';
 
-export class AuthController {
-    constructor(
-        private readonly authService: AuthService,
-        private readonly loginUserUseCase: LoginUserUseCase,
-        private readonly registerUserUseCase: RegisterUserUseCase,
-        private readonly refreshTokenUseCase: RefreshTokenUseCase,
-        private readonly cacheService: CacheService
-    ) {}
+// Interfaces para requests
+interface LoginRequest {
+    email: string;
+    password: string;
+}
+
+interface RegisterRequest {
+    name: string;
+    email: string;
+    password: string;
+    confirmPassword?: string;
+}
+
+interface RefreshTokenRequest {
+    refreshToken: string;
+}
+
+// Interfaces para params
+interface UserParamsRequest {
+    id: string;
+}
+
+export class AuthFastifyController {
+    private readonly authService: AuthService;
+    private readonly loginUserUseCase: LoginUserUseCase;
+
+    constructor() {
+        this.authService = new AuthService();
+        this.loginUserUseCase = new LoginUserUseCase(this.authService);
+    }
 
     /**
      * Autentica usuário e retorna tokens JWT
      */
-    async login(req: Request, res: Response): Promise<void> {
+    async login(
+        request: FastifyRequest<{ Body: LoginRequest }>, 
+        reply: FastifyReply
+    ): Promise<void> {
         try {
-            const { email, password } = req.body;
+            const { email, password } = request.body;
 
             logger.info('Attempting login', { email });
 
             const result = await this.loginUserUseCase.execute({
                 email,
                 password,
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
+                ipAddress: request.ip,
+                userAgent: request.headers['user-agent']
             });
 
-            // Cache user session
-            await this.cacheService.set(
-                `user_session:${result.user.id}`,
-                result.user,
-                3600 // 1 hour
-            );
+            // Set refresh token as httpOnly cookie
+            reply.setCookie('refreshToken', result.tokens.refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+                path: '/'
+            });
 
-            res.status(HTTP_STATUS.SUCCESS).json({
+            reply.code(200).send({
                 success: true,
-                message: 'Login realizado com sucesso',
                 data: {
                     user: result.user,
-                    accessToken: result.accessToken,
-                    refreshToken: result.refreshToken,
+                    accessToken: result.tokens.accessToken,
                     expiresIn: result.expiresIn
                 }
             });
 
-            logger.info('Login successful', { userId: result.user.id });
-
         } catch (error) {
-            logger.error('Login failed', {
-                email: req.body?.email,
-                error: error.message
-            });
+            logger.error('Login failed', error as Error, { email: request.body?.email });
 
             if (error instanceof ValidationException) {
-                res.status(HTTP_STATUS.BAD_REQUEST).json({
+                reply.code(400).send({
                     success: false,
                     message: error.message,
-                    errors: error.details
+                    error: 'VALIDATION_ERROR',
+                    details: error.validationErrors
                 });
-                return;
-            }
-
-            if (error instanceof BusinessException) {
-                res.status(HTTP_STATUS.UNAUTHORIZED).json({
+            } else if (error instanceof BusinessException) {
+                reply.code(error.statusCode).send({
                     success: false,
-                    message: error.message
+                    message: error.message,
+                    error: error.code
                 });
-                return;
+            } else {
+                reply.code(500).send({
+                    success: false,
+                    message: 'Internal server error'
+                });
             }
-
-            res.status(HTTP_STATUS.INTERNAL_ERROR).json({
-                success: false,
-                message: 'Erro interno do servidor'
-            });
         }
     }
 
     /**
      * Registra novo usuário
      */
-    async register(req: Request, res: Response): Promise<void> {
+    async register(
+        request: FastifyRequest<{ Body: RegisterRequest }>, 
+        reply: FastifyReply
+    ): Promise<void> {
         try {
-            const userData = req.body;
+            const userData = request.body;
 
             logger.info('Attempting user registration', { email: userData.email });
 
-            const result = await this.registerUserUseCase.execute({
-                ...userData,
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
+            const result = await this.authService.register(userData);
+
+            // Set refresh token as httpOnly cookie
+            reply.setCookie('refreshToken', result.tokens.refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+                path: '/'
             });
 
-            res.status(HTTP_STATUS.CREATED).json({
+            reply.code(201).send({
                 success: true,
-                message: 'Usuário criado com sucesso',
                 data: {
                     user: result.user,
-                    accessToken: result.accessToken,
-                    refreshToken: result.refreshToken
+                    accessToken: result.tokens.accessToken,
+                    expiresIn: process.env.JWT_EXPIRES_IN || '15m'
                 }
             });
 
-            logger.info('User registration successful', { userId: result.user.id });
-
         } catch (error) {
-            logger.error('Registration failed', {
-                email: req.body?.email,
-                error: error.message
-            });
+            logger.error('Registration failed', error as Error, { email: request.body?.email });
 
             if (error instanceof ValidationException) {
-                res.status(HTTP_STATUS.BAD_REQUEST).json({
+                reply.code(400).send({
                     success: false,
                     message: error.message,
-                    errors: error.details
+                    error: 'VALIDATION_ERROR',
+                    details: error.validationErrors
                 });
-                return;
-            }
-
-            if (error instanceof BusinessException) {
-                res.status(HTTP_STATUS.CONFLICT).json({
+            } else if (error instanceof BusinessException) {
+                reply.code(error.statusCode).send({
                     success: false,
-                    message: error.message
+                    message: error.message,
+                    error: error.code
                 });
-                return;
+            } else {
+                reply.code(500).send({
+                    success: false,
+                    message: 'Internal server error'
+                });
             }
-
-            res.status(HTTP_STATUS.INTERNAL_ERROR).json({
-                success: false,
-                message: 'Erro interno do servidor'
-            });
         }
     }
 
     /**
-     * Renova tokens JWT
+     * Renova tokens JWT usando refresh token
      */
-    async refreshToken(req: Request, res: Response): Promise<void> {
+    async refreshToken(
+        request: FastifyRequest<{ Body: RefreshTokenRequest }>, 
+        reply: FastifyReply
+    ): Promise<void> {
         try {
-            const { refreshToken } = req.body;
+            // Try to get refresh token from cookie first, then from body
+            const refreshToken = request.cookies.refreshToken || request.body?.refreshToken;
 
-            const result = await this.refreshTokenUseCase.execute({ refreshToken });
+            if (!refreshToken) {
+                reply.code(400).send({
+                    success: false,
+                    message: 'Refresh token is required',
+                    error: 'MISSING_REFRESH_TOKEN'
+                });
+                return;
+            }
 
-            res.status(HTTP_STATUS.SUCCESS).json({
+            logger.debug('Attempting token refresh');
+
+            const tokens = await this.authService.refreshTokens(refreshToken);
+
+            // Update refresh token cookie
+            reply.setCookie('refreshToken', tokens.refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+                path: '/'
+            });
+
+            reply.code(200).send({
                 success: true,
-                message: 'Token renovado com sucesso',
                 data: {
-                    accessToken: result.accessToken,
-                    refreshToken: result.refreshToken,
-                    expiresIn: result.expiresIn
+                    accessToken: tokens.accessToken,
+                    expiresIn: process.env.JWT_EXPIRES_IN || '15m'
                 }
             });
 
         } catch (error) {
-            logger.error('Token refresh failed', { error: error.message });
+            logger.error('Token refresh failed', error as Error);
 
-            res.status(HTTP_STATUS.UNAUTHORIZED).json({
+            reply.code(401).send({
                 success: false,
-                message: 'Token inválido ou expirado'
+                message: 'Invalid or expired refresh token',
+                error: 'INVALID_REFRESH_TOKEN'
             });
         }
     }
 
     /**
-     * Logout do usuário
+     * Faz logout do usuário
      */
-    async logout(req: Request, res: Response): Promise<void> {
+    async logout(
+        request: FastifyRequest<{ Body: { refreshToken?: string } }>, 
+        reply: FastifyReply
+    ): Promise<void> {
         try {
-            const userId = req.user?.id;
+            // Get user from JWT token (would be set by auth middleware)
+            const userId = (request as any).user?.id;
 
             if (userId) {
-                // Remove user session from cache
-                await this.cacheService.delete(`user_session:${userId}`);
+                const refreshToken = request.cookies.refreshToken || request.body?.refreshToken;
+                await this.authService.logout(userId, refreshToken);
 
-                // Blacklist current token
-                const token = req.headers.authorization?.replace('Bearer ', '');
-                if (token) {
-                    await this.cacheService.set(
-                        `blacklisted_token:${token}`,
-                        true,
-                        3600 // 1 hour
-                    );
+                // Remove refresh token cache entry
+                if (refreshToken) {
+                    await cacheService.del(`refresh_token:${userId}`);
                 }
-
-                logger.info('User logout successful', { userId });
             }
 
-            res.status(HTTP_STATUS.SUCCESS).json({
+            // Clear refresh token cookie
+            reply.clearCookie('refreshToken', {
+                path: '/'
+            });
+
+            reply.code(200).send({
                 success: true,
-                message: 'Logout realizado com sucesso'
+                message: 'Logged out successfully'
             });
 
         } catch (error) {
-            logger.error('Logout failed', { error: error.message });
+            logger.error('Logout failed', error as Error);
 
-            res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+            reply.code(500).send({
                 success: false,
-                message: 'Erro durante logout'
+                message: 'Logout failed'
             });
         }
     }
 
     /**
-     * Verifica se usuário está autenticado
+     * Retorna informações do usuário atual
      */
-    async me(req: Request, res: Response): Promise<void> {
+    async me(
+        request: FastifyRequest, 
+        reply: FastifyReply
+    ): Promise<void> {
         try {
-            const userId = req.user?.id;
+            // User would be set by auth middleware
+            const user = (request as any).user;
 
-            if (!userId) {
-                res.status(HTTP_STATUS.UNAUTHORIZED).json({
+            if (!user) {
+                reply.code(401).send({
                     success: false,
-                    message: 'Usuário não autenticado'
+                    message: 'Authentication required',
+                    error: 'AUTHENTICATION_REQUIRED'
                 });
                 return;
             }
 
-            // Try to get from cache first
-            let user = await this.cacheService.get(`user_session:${userId}`);
-
-            if (!user) {
-                user = await this.authService.getUserById(userId);
-
-                if (user) {
-                    await this.cacheService.set(`user_session:${userId}`, user, 3600);
-                }
-            }
-
-            if (!user) {
-                res.status(HTTP_STATUS.NOT_FOUND).json({
-                    success: false,
-                    message: 'Usuário não encontrado'
-                });
-                return;
-            }
-
-            res.status(HTTP_STATUS.SUCCESS).json({
+            reply.code(200).send({
                 success: true,
-                data: { user }
+                data: {
+                    user: {
+                        id: user.id,
+                        email: user.email,
+                        name: user.name,
+                        isActive: user.isActive
+                    }
+                }
             });
 
         } catch (error) {
-            logger.error('Get current user failed', {
-                userId: req.user?.id,
-                error: error.message
+            logger.error('Failed to get user info', error as Error);
+
+            reply.code(500).send({
+                success: false,
+                message: 'Failed to get user information'
+            });
+        }
+    }
+
+    /**
+     * Valida token JWT
+     */
+    async validateToken(
+        request: FastifyRequest<{ Body: { token: string } }>, 
+        reply: FastifyReply
+    ): Promise<void> {
+        try {
+            const { token } = request.body;
+
+            if (!token) {
+                reply.code(400).send({
+                    success: false,
+                    message: 'Token is required',
+                    error: 'MISSING_TOKEN'
+                });
+                return;
+            }
+
+            const payload = this.authService.verifyToken(token);
+
+            reply.code(200).send({
+                success: true,
+                data: {
+                    valid: true,
+                    payload: {
+                        userId: payload.sub,
+                        email: payload.email,
+                        name: payload.name
+                    },
+                    expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null
+                }
             });
 
-            res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+        } catch (error) {
+            logger.error('Token validation failed', error as Error);
+
+            reply.code(401).send({
                 success: false,
-                message: 'Erro interno do servidor'
+                data: {
+                    valid: false
+                },
+                message: 'Invalid or expired token',
+                error: 'INVALID_TOKEN'
             });
         }
     }
 }
+
+// Singleton instance
+export const authController = new AuthFastifyController();

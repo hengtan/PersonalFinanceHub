@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { CacheService } from '../../infrastructure/database/redis/cache.service';
 import { UserRepository } from '../../core/domain/repositories/user.repository';
-import { logger } from '../../shared/utils/logger.util';
+import { logger } from '../../infrastructure/monitoring/logger.service';
 import { HTTP_STATUS } from '../../shared/constants/status-codes';
 import { BusinessException } from '../../shared/exceptions/business.exception';
 

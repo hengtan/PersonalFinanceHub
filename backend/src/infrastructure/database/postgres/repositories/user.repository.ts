@@ -2,7 +2,7 @@ import { Repository, DataSource } from 'typeorm';
 import { UserRepository, User, CreateUserData, UpdateUserData } from '../../../../core/domain/repositories/user.repository';
 import { UserPostgresEntity } from '../entities/user.entity';
 import { DatabaseException } from '../../../../shared/exceptions/infrastructure.exception';
-import { logger } from '../../../../shared/utils/logger.util';
+import { logger } from '../../../../infrastructure/monitoring/logger.service';
 
 export class UserRepositoryImpl implements UserRepository {
     private readonly repository: Repository<UserPostgresEntity>;

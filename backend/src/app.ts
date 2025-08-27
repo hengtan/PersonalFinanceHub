@@ -3,9 +3,10 @@ import { logger } from './infrastructure/monitoring/logger.service';
 import { MetricsService } from './infrastructure/monitoring/metrics.service';
 
 // Import route modules
-import authRoutes from './api/routes/auth.simple';
-import dashboardRoutes from './api/routes/dashboard.simple';
-import transactionRoutes from './api/routes/transaction.simple';
+import authRoutes from './api/routes/auth.routes';
+import dashboardRoutes from './api/routes/dashboard.routes';
+import transactionRoutes from './api/routes/transaction.routes';
+// import budgetRoutes from './api/routes/budget.routes';
 
 // import userRoutes from './api/routes/user.routes';
 // import transactionRoutes from './api/routes/transaction.routes';
@@ -62,12 +63,16 @@ export class App {
                 port: this.config.port
             });
 
+            logger.info('🔧 Setting up plugins...');
             await this.setupPlugins();
+            logger.info('🛡️ Setting up middlewares...');
             await this.setupMiddlewares();
+            logger.info('🛣️ Setting up routes...');
             await this.setupRoutes();
+            logger.info('❤️ Setting up health check...');
             await this.setupHealthCheck();
+            logger.info('🚨 Setting up error handlers...');
             await this.setupErrorHandlers();
-            await this.fastify.register(import('@fastify/express'));
 
             logger.info('Application initialized successfully');
 
@@ -232,32 +237,39 @@ export class App {
 
     private async setupRoutes(): Promise<void> {
         try {
+            logger.info('🔄 Setting up routes...');
             const basePrefix = this.config.apiPrefix;
             const versionedPrefix = `${basePrefix}/${this.config.apiVersion}`;
+
+            // Test route to verify registration works
+            this.fastify.get(`${basePrefix}/test`, async (request, reply) => {
+                return reply.code(200).send({ message: 'Test route working' });
+            });
+            logger.info(`✅ Test route registered at ${basePrefix}/test`);
 
             // Authentication routes
             await this.fastify.register(authRoutes, {
                 prefix: `${basePrefix}/auth`
             });
 
-            // Dashboard routes
-            await this.fastify.register(dashboardRoutes, {
-                prefix: `${basePrefix}/dashboard`
-            });
+            // Dashboard routes (temporarily disabled for testing)
+            // await this.fastify.register(dashboardRoutes, {
+            //     prefix: `${basePrefix}/dashboard`
+            // });
 
-            // Financial transaction routes
-            await this.fastify.register(transactionRoutes, {
-                prefix: `${basePrefix}/transactions`
-            });
+            // Financial transaction routes (temporarily disabled for testing)
+            // await this.fastify.register(transactionRoutes, {
+            //     prefix: `${basePrefix}/transactions`
+            // });
 
             // Account management routes (commented until implemented)
             // await this.fastify.register(accountRoutes, {
             //   prefix: `${versionedPrefix}/accounts`
             // });
 
-            // Budget management routes (commented until implemented)
+            // Budget management routes (temporarily disabled)
             // await this.fastify.register(budgetRoutes, {
-            //   prefix: `${versionedPrefix}/budgets`
+            //     prefix: `${basePrefix}/budgets`
             // });
 
             // Category management routes (commented until implemented)

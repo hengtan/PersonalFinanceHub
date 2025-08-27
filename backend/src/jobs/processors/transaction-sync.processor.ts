@@ -3,7 +3,7 @@ import { Job } from 'bull';
 import { TransactionRepository } from '../../../core/domain/repositories/transaction.repository';
 import { EventDispatcherService } from '../../../core/services/event-dispatcher.service';
 import { TransactionCreatedEvent } from '../../../core/domain/events/transaction-created.event';
-import { logger } from '../../../shared/utils/logger.util';
+import { logger } from '../../../infrastructure/monitoring/logger.service';
 
 export interface TransactionSyncJobData {
     userId: string;

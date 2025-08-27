@@ -1,6 +1,6 @@
 // backend/src/core/services/event-dispatcher.service.ts
 import { BaseDomainEvent } from '../domain/events/base-domain.event';
-import { logger } from '../../shared/utils/logger.util';
+import { logger } from '../../infrastructure/monitoring/logger.service';
 
 export interface EventHandler<T extends BaseDomainEvent = BaseDomainEvent> {
     handle(event: T): Promise<void>;

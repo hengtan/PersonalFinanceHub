@@ -1,476 +1,228 @@
-// backend/src/api/routes/transaction.routes.ts
-import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { TransactionController } from '../controllers/transaction.controller';
-import { AuthMiddleware } from '../middlewares/auth.middleware';
-import { validateSchema } from '../middlewares/error-handler.middleware';
+// backend/src/api/routes/transaction.routes.ts - Fastify version
+import { FastifyInstance } from 'fastify';
+import { logger } from '../../infrastructure/monitoring/logger.service';
+import { transactionController } from '../controllers/transaction.controller';
 import {
     createTransactionSchema,
     updateTransactionSchema,
     transactionQuerySchema,
-    transactionParamsSchema,
-    bulkTransactionSchema,
-    importTransactionSchema,
-    transactionReportSchema,
 } from '../validators/transaction.validator';
 
-const router = Router();
-const transactionController = new TransactionController();
+export default async function transactionRoutes(fastify: FastifyInstance) {
+    const routeContext = logger.child({ module: 'transaction-routes' });
 
-/**
- * Rate limiting específico para transações
- */
-const transactionRateLimit = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 200, // máximo 200 operações de transação por IP por janela
-    message: {
-        success: false,
-        error: {
-            code: 'TRANSACTION_RATE_LIMIT_EXCEEDED',
-            message: 'Too many transaction operations, please try again later.',
-        },
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
+    // Create transaction
+    fastify.post('/', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'Create a new transaction',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            body: {
+                type: 'object',
+                required: ['description', 'amount', 'type', 'accountId'],
+                properties: {
+                    description: { type: 'string', minLength: 1, maxLength: 500 },
+                    amount: { type: 'number', minimum: 0.01 },
+                    type: { type: 'string', enum: ['income', 'expense', 'transfer'] },
+                    accountId: { type: 'string' },
+                    destinationAccountId: { type: 'string' },
+                    category: { type: 'string' },
+                    paymentMethod: { type: 'string', enum: ['cash', 'debit_card', 'credit_card', 'bank_transfer', 'pix'] },
+                    tags: { type: 'array', items: { type: 'string' } },
+                    notes: { type: 'string' }
+                }
+            },
+            response: {
+                201: {
+                    type: 'object',
+                    properties: {
+                        success: { type: 'boolean' },
+                        message: { type: 'string' },
+                        data: {
+                            type: 'object',
+                            properties: {
+                                transaction: {
+                                    type: 'object',
+                                    properties: {
+                                        id: { type: 'string' },
+                                        description: { type: 'string' },
+                                        amount: { type: 'number' },
+                                        type: { type: 'string' },
+                                        status: { type: 'string' }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }, transactionController.createTransaction.bind(transactionController));
 
-const createTransactionRateLimit = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minuto
-    max: 30, // máximo 30 criações de transação por IP por minuto
-    message: {
-        success: false,
-        error: {
-            code: 'CREATE_TRANSACTION_RATE_LIMIT_EXCEEDED',
-            message: 'Too many transaction creations, please slow down.',
-        },
-    },
-});
+    // List transactions
+    fastify.get('/', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'List user transactions with pagination and filtering',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            querystring: {
+                type: 'object',
+                properties: {
+                    page: { type: 'integer', minimum: 1, default: 1 },
+                    limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+                    type: { type: 'string', enum: ['income', 'expense', 'transfer'] },
+                    category: { type: 'string' },
+                    startDate: { type: 'string', format: 'date' },
+                    endDate: { type: 'string', format: 'date' },
+                    minAmount: { type: 'number', minimum: 0 },
+                    maxAmount: { type: 'number', minimum: 0 },
+                    status: { type: 'string', enum: ['pending', 'completed', 'cancelled', 'failed'] },
+                    search: { type: 'string' }
+                }
+            }
+        }
+    }, transactionController.listTransactions.bind(transactionController));
 
-/**
- * Middlewares aplicados a todas as rotas de transação
- */
-router.use(AuthMiddleware.authenticate);
-router.use(transactionRateLimit);
-router.use(AuthMiddleware.userRateLimit(120)); // 120 req/min por usuário
+    // Get transaction by ID
+    fastify.get('/:id', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'Get transaction details by ID',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: {
+                    id: { type: 'string' }
+                }
+            }
+        }
+    }, transactionController.getTransaction.bind(transactionController));
 
-/**
- * GET /api/transactions - Lista transações com filtros e paginação
- */
-router.get('/',
-    validateSchema(transactionQuerySchema, 'query'),
-    AuthMiddleware.authorize(['transactions:read']),
-    AuthMiddleware.logUserActivity('list_transactions'),
-    transactionController.getTransactions.bind(transactionController)
-);
+    // Update transaction
+    fastify.put('/:id', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'Update transaction by ID',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: {
+                    id: { type: 'string' }
+                }
+            },
+            body: {
+                type: 'object',
+                properties: {
+                    description: { type: 'string', minLength: 1, maxLength: 500 },
+                    amount: { type: 'number', minimum: 0.01 },
+                    type: { type: 'string', enum: ['income', 'expense', 'transfer'] },
+                    category: { type: 'string' },
+                    paymentMethod: { type: 'string', enum: ['cash', 'debit_card', 'credit_card', 'bank_transfer', 'pix'] },
+                    tags: { type: 'array', items: { type: 'string' } },
+                    notes: { type: 'string' }
+                }
+            }
+        }
+    }, transactionController.updateTransaction.bind(transactionController));
 
-/**
- * POST /api/transactions - Cria nova transação
- */
-router.post('/',
-    createTransactionRateLimit,
-    validateSchema(createTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.logUserActivity('create_transaction'),
-    transactionController.createTransaction.bind(transactionController)
-);
+    // Delete transaction
+    fastify.delete('/:id', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'Delete transaction by ID',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: {
+                    id: { type: 'string' }
+                }
+            }
+        }
+    }, transactionController.deleteTransaction.bind(transactionController));
 
-/**
- * GET /api/transactions/:id - Busca transação específica
- */
-router.get('/:id',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:read']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    transactionController.getTransaction.bind(transactionController)
-);
+    // Transaction statistics
+    fastify.get('/stats/summary', {
+        schema: {
+            tags: ['Transactions'],
+            description: 'Get transaction statistics summary',
+            headers: {
+                type: 'object',
+                properties: {
+                    authorization: { type: 'string', description: 'Bearer token' }
+                }
+            },
+            querystring: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', format: 'date' },
+                    endDate: { type: 'string', format: 'date' },
+                    groupBy: { type: 'string', enum: ['day', 'week', 'month', 'year'] }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        try {
+            // Mock stats for now
+            const stats = {
+                summary: {
+                    totalTransactions: 156,
+                    totalIncome: 12500.00,
+                    totalExpenses: 8750.25,
+                    netIncome: 3749.75,
+                    averageTransaction: 80.13
+                },
+                byType: {
+                    income: { count: 45, amount: 12500.00 },
+                    expense: { count: 98, amount: 8750.25 },
+                    transfer: { count: 13, amount: 2100.50 }
+                },
+                trends: {
+                    lastWeek: { income: 3000.00, expenses: 1200.30 },
+                    thisWeek: { income: 2800.00, expenses: 1450.75 }
+                }
+            };
 
-/**
- * PUT /api/transactions/:id - Atualiza transação completa
- */
-router.put('/:id',
-    validateSchema(transactionParamsSchema, 'params'),
-    validateSchema(createTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('update_transaction_full'),
-    transactionController.updateTransactionFull.bind(transactionController)
-);
+            return reply.code(200).send({
+                success: true,
+                data: stats
+            });
 
-/**
- * PATCH /api/transactions/:id - Atualização parcial de transação
- */
-router.patch('/:id',
-    validateSchema(transactionParamsSchema, 'params'),
-    validateSchema(updateTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('update_transaction'),
-    transactionController.updateTransaction.bind(transactionController)
-);
+        } catch (error) {
+            routeContext.error('Transaction stats error', error as Error);
+            return reply.code(500).send({
+                success: false,
+                message: 'Internal server error'
+            });
+        }
+    });
 
-/**
- * DELETE /api/transactions/:id - Remove transação
- */
-router.delete('/:id',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:delete']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('delete_transaction'),
-    transactionController.deleteTransaction.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/bulk - Operações em lote
- */
-router.post('/bulk',
-    validateSchema(bulkTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:bulk_operations']),
-    AuthMiddleware.logUserActivity('bulk_transaction_operation'),
-    transactionController.bulkOperation.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/:id/history - Histórico de alterações da transação
- */
-router.get('/:id/history',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:read']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    transactionController.getTransactionHistory.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/:id/duplicate - Duplica transação
- */
-router.post('/:id/duplicate',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('duplicate_transaction'),
-    transactionController.duplicateTransaction.bind(transactionController)
-);
-
-/**
- * PATCH /api/transactions/:id/categorize - Categoriza transação
- */
-router.patch('/:id/categorize',
-    validateSchema(transactionParamsSchema, 'params'),
-    validateSchema({ categoryId: 'string' }, 'body'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('categorize_transaction'),
-    transactionController.categorizeTransaction.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/:id/split - Divide transação
- */
-router.post('/:id/split',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('split_transaction'),
-    transactionController.splitTransaction.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/:id/merge - Mescla transações
- */
-router.post('/:id/merge',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('merge_transactions'),
-    transactionController.mergeTransactions.bind(transactionController)
-);
-
-/**
- * Rotas de importação/exportação
- */
-
-/**
- * POST /api/transactions/import - Importa transações de arquivo
- */
-router.post('/import',
-    validateSchema(importTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:import']),
-    AuthMiddleware.logUserActivity('import_transactions'),
-    transactionController.importTransactions.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/export - Exporta transações
- */
-router.get('/export',
-    validateSchema(transactionQuerySchema, 'query'),
-    AuthMiddleware.authorize(['transactions:export']),
-    AuthMiddleware.logUserActivity('export_transactions'),
-    transactionController.exportTransactions.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/import/preview - Preview de importação
- */
-router.post('/import/preview',
-    validateSchema(importTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:import']),
-    transactionController.previewImport.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/import/templates - Templates de importação
- */
-router.get('/import/templates',
-    AuthMiddleware.authorize(['transactions:import']),
-    transactionController.getImportTemplates.bind(transactionController)
-);
-
-/**
- * Rotas de anexos
- */
-
-/**
- * POST /api/transactions/:id/attachments - Adiciona anexo à transação
- */
-router.post('/:id/attachments',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('add_transaction_attachment'),
-    transactionController.addAttachment.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/:id/attachments - Lista anexos da transação
- */
-router.get('/:id/attachments',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:read']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    transactionController.getAttachments.bind(transactionController)
-);
-
-/**
- * DELETE /api/transactions/:id/attachments/:attachmentId - Remove anexo
- */
-router.delete('/:id/attachments/:attachmentId',
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('remove_transaction_attachment'),
-    transactionController.removeAttachment.bind(transactionController)
-);
-
-/**
- * Rotas de relatórios e estatísticas
- */
-
-/**
- * GET /api/transactions/reports/summary - Relatório resumo
- */
-router.get('/reports/summary',
-    validateSchema(transactionReportSchema, 'query'),
-    AuthMiddleware.authorize(['reports:read']),
-    transactionController.getSummaryReport.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/reports/trends - Relatório de tendências
- */
-router.get('/reports/trends',
-    validateSchema(transactionReportSchema, 'query'),
-    AuthMiddleware.authorize(['reports:read']),
-    transactionController.getTrendsReport.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/reports/category-breakdown - Breakdown por categoria
- */
-router.get('/reports/category-breakdown',
-    validateSchema(transactionReportSchema, 'query'),
-    AuthMiddleware.authorize(['reports:read']),
-    transactionController.getCategoryBreakdownReport.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/reports/cash-flow - Relatório de fluxo de caixa
- */
-router.get('/reports/cash-flow',
-    validateSchema(transactionReportSchema, 'query'),
-    AuthMiddleware.authorize(['reports:read']),
-    transactionController.getCashFlowReport.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/stats - Estatísticas gerais
- */
-router.get('/stats',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getStatistics.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/stats/monthly - Estatísticas mensais
- */
-router.get('/stats/monthly',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getMonthlyStatistics.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/stats/categories - Estatísticas por categoria
- */
-router.get('/stats/categories',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getCategoryStatistics.bind(transactionController)
-);
-
-/**
- * Rotas de transações recorrentes
- */
-
-/**
- * GET /api/transactions/recurring - Lista transações recorrentes
- */
-router.get('/recurring',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getRecurringTransactions.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/:id/recurring - Cria regra recorrente
- */
-router.post('/:id/recurring',
-    validateSchema(transactionParamsSchema, 'params'),
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('create_recurring_rule'),
-    transactionController.createRecurringRule.bind(transactionController)
-);
-
-/**
- * PATCH /api/transactions/recurring/:ruleId - Atualiza regra recorrente
- */
-router.patch('/recurring/:ruleId',
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('update_recurring_rule'),
-    transactionController.updateRecurringRule.bind(transactionController)
-);
-
-/**
- * DELETE /api/transactions/recurring/:ruleId - Remove regra recorrente
- */
-router.delete('/recurring/:ruleId',
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('delete_recurring_rule'),
-    transactionController.deleteRecurringRule.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/recurring/:ruleId/execute - Executa regra manualmente
- */
-router.post('/recurring/:ruleId/execute',
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.authorizeOwnerOrAdmin('userId'),
-    AuthMiddleware.logUserActivity('execute_recurring_rule'),
-    transactionController.executeRecurringRule.bind(transactionController)
-);
-
-/**
- * Rotas de busca e sugestões
- */
-
-/**
- * GET /api/transactions/search - Busca avançada de transações
- */
-router.get('/search',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.searchTransactions.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/suggestions/merchants - Sugestões de comerciantes
- */
-router.get('/suggestions/merchants',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getMerchantSuggestions.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/suggestions/categories - Sugestões de categorias
- */
-router.get('/suggestions/categories',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.getCategorySuggestions.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/auto-categorize - Auto-categorização inteligente
- */
-router.post('/auto-categorize',
-    AuthMiddleware.authorize(['transactions:write']),
-    AuthMiddleware.logUserActivity('auto_categorize_transactions'),
-    transactionController.autoCategorize.bind(transactionController)
-);
-
-/**
- * Rotas de validação
- */
-
-/**
- * POST /api/transactions/validate - Valida dados de transação sem criar
- */
-router.post('/validate',
-    validateSchema(createTransactionSchema, 'body'),
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.validateTransaction.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/check-duplicates - Verifica duplicatas
- */
-router.post('/check-duplicates',
-    AuthMiddleware.authorize(['transactions:read']),
-    transactionController.checkDuplicates.bind(transactionController)
-);
-
-/**
- * Rotas administrativas (requerem permissões especiais)
- */
-
-/**
- * GET /api/transactions/admin/overview - Visão geral administrativa
- */
-router.get('/admin/overview',
-    AuthMiddleware.authorize(['admin:transactions:read']),
-    transactionController.getAdminOverview.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/admin/reprocess - Reprocessa transações
- */
-router.post('/admin/reprocess',
-    AuthMiddleware.authorize(['admin:transactions:write']),
-    AuthMiddleware.logUserActivity('admin_reprocess_transactions'),
-    transactionController.reprocessTransactions.bind(transactionController)
-);
-
-/**
- * POST /api/transactions/admin/cleanup - Limpeza de dados órfãos
- */
-router.post('/admin/cleanup',
-    AuthMiddleware.authorize(['admin:transactions:write']),
-    AuthMiddleware.logUserActivity('admin_cleanup_transactions'),
-    transactionController.cleanupOrphanedData.bind(transactionController)
-);
-
-/**
- * GET /api/transactions/health - Health check das transações
- */
-router.get('/health',
-    AuthMiddleware.optionalAuthenticate,
-    transactionController.healthCheck.bind(transactionController)
-);
-
-export default router;
+    routeContext.info('Transaction routes registered successfully');
+}

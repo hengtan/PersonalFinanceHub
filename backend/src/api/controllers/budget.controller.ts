@@ -1,12 +1,12 @@
 // backend/src/api/controllers/budget.controller.ts
 import { Request, Response, NextFunction } from 'express';
-import { pgWritePool, pgReadPool, withPostgresTransaction, CacheService } from '@/infrastructure/database/connections';
+import { pgWritePool, pgReadPool, withPostgresTransaction, CacheService } from '../../infrastructure/database/connections';
 import { AppError } from '../middlewares/error-handler.middleware';
-import { ERROR_CODES } from '@/shared/types/error-codes';
-import { Logger } from '@/infrastructure/monitoring/logger.service';
-import { MetricsService } from '@/infrastructure/monitoring/metrics.service';
-import { EventBus } from '@/infrastructure/events/event-bus';
-import { ValidationUtil } from '@/shared/types/validation.util';
+import { ERROR_CODES } from '../../shared/constants/error-codes';
+import { logger } from '../../infrastructure/monitoring/logger.service';
+import { MetricsService } from '../../infrastructure/monitoring/metrics.service';
+import { EventBus } from '../../infrastructure/events/event-bus';
+import { ValidationUtil } from '../../shared/types/validation.util';
 import { v4 as uuidv4 } from 'uuid';
 
 interface BudgetCategory {

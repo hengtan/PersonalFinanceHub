@@ -1,9 +1,9 @@
 // backend/src/api/middlewares/error-handler.middleware.ts
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { ERROR_CODES, ERROR_MESSAGES, HTTP_STATUS_MAP } from '@/shared/types/error-codes';
+import { ERROR_CODES, ERROR_MESSAGES, HTTP_STATUS_MAP } from '../../shared/constants/error-codes';
 import { Logger } from 'pino';
-import { MetricsService } from '@/infrastructure/monitoring/metrics.service';
+import { MetricsService } from '../../infrastructure/monitoring/metrics.service';
 
 /**
  * Classe customizada para erros da aplicação

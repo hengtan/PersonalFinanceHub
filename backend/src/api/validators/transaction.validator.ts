@@ -178,16 +178,31 @@ export const createTransactionSchema = z.object({
  * Schema para atualização de transação
  * Permite atualizações parciais mas mantém validações de integridade
  */
-export const updateTransactionSchema = createTransactionSchema.partial()
-    .omit({
-        recurringRule: true, // Recurring rules cannot be updated, only created/deleted
-    })
-    .refine(
-        (data) => Object.keys(data).length > 0,
-        {
-            message: 'At least one field must be provided for update',
-        }
-    );
+export const updateTransactionSchema = z.object({
+    description: z.string()
+        .min(1, 'Description is required')
+        .max(500, 'Description must be less than 500 characters')
+        .trim()
+        .optional(),
+
+    amount: z.number()
+        .positive('Amount must be positive')
+        .max(999999999.99, 'Amount is too large')
+        .optional(),
+
+    type: z.enum(transactionTypes, {
+        errorMap: () => ({ message: 'Transaction type must be income, expense, or transfer' })
+    }).optional(),
+
+    status: z.enum(transactionStatuses, {
+        errorMap: () => ({ message: 'Invalid transaction status' })
+    }).optional()
+}).refine(
+    (data) => Object.keys(data).length > 0,
+    {
+        message: 'At least one field must be provided for update',
+    }
+);
 
 /**
  * Schema para consultas de transação com filtros avançados

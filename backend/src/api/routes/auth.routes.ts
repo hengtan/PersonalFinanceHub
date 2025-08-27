@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../infrastructure/monitoring/logger.service';
 import { MetricsService } from '../../infrastructure/monitoring/metrics.service';
-import { authController } from '../controllers/auth.fastify.controller';
+import { authController } from '../controllers/auth.controller';
 
 // Tipos para as requests de autenticação
 interface LoginRequest {

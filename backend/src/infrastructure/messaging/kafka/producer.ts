@@ -1,6 +1,6 @@
 import { Kafka, Producer, ProducerRecord } from 'kafkajs';
 import { BaseDomainEvent } from '../../../core/domain/events/base-domain.event';
-import { logger } from '../../../shared/utils/logger.util';
+import { logger } from '../../../infrastructure/monitoring/logger.service';
 import { MessagingException } from '../../../shared/exceptions/infrastructure.exception';
 import { config } from '../../../config/environment';
 

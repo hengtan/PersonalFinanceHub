@@ -1,5 +1,5 @@
 import { Kafka, Consumer, ConsumerRunConfig, EachMessagePayload } from 'kafkajs';
-import { logger } from '../../../shared/utils/logger.util';
+import { logger } from '../../../infrastructure/monitoring/logger.service';
 import { MessagingException } from '../../../shared/exceptions/infrastructure.exception';
 import { config } from '../../../config/environment';
 

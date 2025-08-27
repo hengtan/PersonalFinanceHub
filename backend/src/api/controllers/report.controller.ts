@@ -7,7 +7,7 @@ import { GenerateExpenseAnalysisUseCase } from '../../application/use-cases/repo
 import { GenerateBudgetComparisonUseCase } from '../../application/use-cases/report/generate-budget-comparison.use-case';
 import { ExportReportUseCase } from '../../application/use-cases/report/export-report.use-case';
 import { CacheService } from '../../infrastructure/database/redis/cache.service';
-import { logger } from '../../shared/utils/logger.util';
+import { logger } from '../../infrastructure/monitoring/logger.service';
 import { ValidationException } from '../../shared/exceptions/validation.exception';
 import { BusinessException } from '../../shared/exceptions/business.exception';
 import { HTTP_STATUS } from '../../shared/constants/status-codes';

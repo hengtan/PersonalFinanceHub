@@ -105,9 +105,13 @@ class Server {
             await QueueService.initialize();
             logger.info('✅ Job queues initialized');
 
-            // 4. Inicia o servidor HTTP
+            // 4. Inicializa a aplicação (rotas, middleware, etc.)
+            logger.info('🔧 Initializing application...');
+            await this.app.initialize();
+
+            // 5. Inicia o servidor HTTP
             logger.info('🌐 Starting HTTP server...');
-            this.app.start();
+            await this.app.start();
 
             logger.info('🎉 Server initialization completed successfully', {
                 port: this.app.getPort(),
