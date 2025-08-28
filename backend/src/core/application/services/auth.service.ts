@@ -71,7 +71,8 @@ export class AuthService {
             const user: AuthUser = {
                 id: '1',
                 email: credentials.email,
-                name: 'Test User',
+                firstName: 'Test',
+                lastName: 'User',
                 isActive: true
             };
 
@@ -166,7 +167,8 @@ export class AuthService {
             const user: AuthUser = {
                 id: payload.sub,
                 email: payload.email,
-                name: payload.name,
+                firstName: payload.firstName || 'Test',
+                lastName: payload.lastName || 'User',
                 isActive: true
             };
 
@@ -208,7 +210,8 @@ export class AuthService {
         const payload = {
             sub: user.id,
             email: user.email,
-            name: user.name,
+            firstName: user.firstName,
+            lastName: user.lastName,
             iat: Math.floor(Date.now() / 1000)
         };
 

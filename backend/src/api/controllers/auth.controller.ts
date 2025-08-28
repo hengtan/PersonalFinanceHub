@@ -59,6 +59,13 @@ export class AuthFastifyController {
                 userAgent: request.headers['user-agent']
             });
 
+            logger.info('Login result received', { 
+                hasTokens: !!result.tokens, 
+                hasAccessToken: !!result.tokens?.accessToken,
+                hasRefreshToken: !!result.tokens?.refreshToken,
+                userId: result.user.id 
+            });
+
             // Set refresh token as httpOnly cookie
             reply.setCookie('refreshToken', result.tokens.refreshToken, {
                 httpOnly: true,
@@ -68,14 +75,25 @@ export class AuthFastifyController {
                 path: '/'
             });
 
-            reply.code(200).send({
+            const responseData = {
                 success: true,
                 data: {
                     user: result.user,
-                    accessToken: result.tokens.accessToken,
-                    expiresIn: result.expiresIn
+                    tokens: {
+                        accessToken: result.tokens.accessToken,
+                        refreshToken: result.tokens.refreshToken,
+                        expiresIn: parseInt(result.expiresIn.replace('m', '')) * 60 // Convert to seconds
+                    }
                 }
+            };
+
+            logger.info('Sending login response', { 
+                hasAccessToken: !!responseData.data.tokens.accessToken,
+                accessTokenLength: responseData.data.tokens.accessToken?.length,
+                responseKeys: Object.keys(responseData.data)
             });
+
+            reply.code(200).send(responseData);
 
         } catch (error) {
             logger.error('Login failed', error as Error, { email: request.body?.email });

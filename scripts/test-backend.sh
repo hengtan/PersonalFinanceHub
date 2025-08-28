@@ -93,7 +93,7 @@ test_login() {
 
     if [ "$http_code" -eq 200 ]; then
         print_success "User login successful"
-        # Update access token
+        # Update access token from the new response format
         ACCESS_TOKEN=$(echo "$body" | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4)
         return 0
     else

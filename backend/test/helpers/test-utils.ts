@@ -48,10 +48,21 @@ export class TestUtils {
           store.set(key, { value, expiry });
           return Promise.resolve('OK');
         }),
-        del: jest.fn().mockImplementation((key: string) => {
-          const existed = store.has(key);
-          store.delete(key);
-          return Promise.resolve(existed ? 1 : 0);
+        del: jest.fn().mockImplementation((key: string | string[]) => {
+          if (Array.isArray(key)) {
+            let count = 0;
+            for (const k of key) {
+              if (store.has(k)) {
+                store.delete(k);
+                count++;
+              }
+            }
+            return Promise.resolve(count);
+          } else {
+            const existed = store.has(key);
+            store.delete(key);
+            return Promise.resolve(existed ? 1 : 0);
+          }
         }),
         exists: jest.fn().mockImplementation((key: string) => {
           const item = store.get(key);
@@ -78,8 +89,15 @@ export class TestUtils {
           store.clear();
           return Promise.resolve('OK');
         }),
-        keys: jest.fn().mockImplementation(() => {
-          return Promise.resolve(Array.from(store.keys()));
+        keys: jest.fn().mockImplementation((pattern: string) => {
+          const allKeys = Array.from(store.keys());
+          if (pattern === '*') {
+            return Promise.resolve(allKeys);
+          }
+          // Convert Redis pattern to regex
+          const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+          const matchedKeys = allKeys.filter(key => regex.test(key));
+          return Promise.resolve(matchedKeys);
         }),
         scan: jest.fn().mockResolvedValue({ cursor: 0, keys: [] }),
         mget: jest.fn().mockResolvedValue([]),
@@ -102,7 +120,8 @@ export class TestUtils {
   }
 
   static async flushMockRedis(): Promise<void> {
-    if (this.redisClient) {
+    if (this.redisClient && this.redisClient._store) {
+      this.redisClient._store.clear();
       await this.redisClient.flushall();
     }
   }
@@ -158,6 +177,7 @@ export class TestUtils {
   }
 
   static generateTransaction(overrides: Partial<any> = {}): any {
+    const baseDate = new Date('2025-08-28T16:27:18.634Z');
     return {
       id: 'test-transaction-id',
       userId: 'test-user-id',
@@ -168,11 +188,11 @@ export class TestUtils {
       type: 'expense',
       accountId: 'test-account-id',
       paymentMethod: 'DEBIT_CARD',
-      date: new Date(),
+      date: baseDate.toISOString(),
       tags: ['test'],
       metadata: {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: baseDate.toISOString(),
+      updatedAt: baseDate.toISOString(),
       ...overrides
     };
   }
