@@ -5,9 +5,48 @@ import { CacheException } from '../../shared/exceptions/base.exception';
 
 const logger = Logger.createChildLogger('CacheService');
 
+export interface CacheStats {
+    hits: number;
+    misses: number;
+    sets: number;
+    deletes: number;
+    errors: number;
+    hitRate: number;
+}
+
+export interface SessionData {
+    userId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    loginAt: Date;
+    lastActivity: Date;
+    ipAddress: string;
+    userAgent: string;
+}
+
+export interface DashboardData {
+    userId: string;
+    totalBalance: number;
+    monthlyIncome: number;
+    monthlyExpenses: number;
+    transactionCount: number;
+    budgetSummary: any[];
+    recentTransactions: any[];
+    generatedAt: Date;
+}
+
 export class CacheService {
     private static instance: CacheService;
     private redisClient: RedisClientType | null = null;
+    private stats: CacheStats = {
+        hits: 0,
+        misses: 0,
+        sets: 0,
+        deletes: 0,
+        errors: 0,
+        hitRate: 0
+    };
 
     private constructor() {}
 
@@ -36,11 +75,16 @@ export class CacheService {
 
             const value = await this.redisClient!.get(key);
             if (value === null) {
+                this.stats.misses++;
+                this.updateHitRate();
                 return null;
             }
 
+            this.stats.hits++;
+            this.updateHitRate();
             return JSON.parse(value);
         } catch (error) {
+            this.stats.errors++;
             logger.error(`Failed to get cache key: ${key}`, error);
             throw new CacheException(`Failed to get cache key: ${key}`, error);
         }
@@ -60,8 +104,10 @@ export class CacheService {
                 await this.redisClient!.set(key, serializedValue);
             }
 
+            this.stats.sets++;
             logger.debug(`Cache key set: ${key}${ttl ? ` (TTL: ${ttl}s)` : ''}`);
         } catch (error) {
+            this.stats.errors++;
             logger.error(`Failed to set cache key: ${key}`, error);
             throw new CacheException(`Failed to set cache key: ${key}`, error);
         }
@@ -74,8 +120,12 @@ export class CacheService {
             }
 
             const result = await this.redisClient!.del(key);
+            if (result > 0) {
+                this.stats.deletes += result;
+            }
             logger.debug(`Cache key deleted: ${key} (affected: ${result})`);
         } catch (error) {
+            this.stats.errors++;
             logger.error(`Failed to delete cache key: ${key}`, error);
             throw new CacheException(`Failed to delete cache key: ${key}`, error);
         }
@@ -159,6 +209,154 @@ export class CacheService {
         } catch (error) {
             logger.error(`Failed to set expiration for key: ${key}`, error);
             return false;
+        }
+    }
+
+    /**
+     * Session Management Methods
+     */
+    public async setSession(sessionId: string, data: SessionData, ttlSeconds: number = 3600): Promise<void> {
+        const key = `session:${sessionId}`;
+        await this.set(key, data, ttlSeconds);
+        logger.debug('Session cached', { sessionId, userId: data.userId });
+    }
+
+    public async getSession(sessionId: string): Promise<SessionData | null> {
+        const key = `session:${sessionId}`;
+        const data = await this.get<SessionData>(key);
+        logger.debug(data ? 'Session cache hit' : 'Session cache miss', { sessionId });
+        return data;
+    }
+
+    public async deleteSession(sessionId: string): Promise<void> {
+        const key = `session:${sessionId}`;
+        await this.del(key);
+        logger.debug('Session deleted from cache', { sessionId });
+    }
+
+    public async extendSession(sessionId: string, ttlSeconds: number = 3600): Promise<boolean> {
+        const key = `session:${sessionId}`;
+        return await this.expire(key, ttlSeconds);
+    }
+
+    /**
+     * Dashboard Data Caching
+     */
+    public async cacheDashboardData(userId: string, data: DashboardData, ttlSeconds: number = 300): Promise<void> {
+        const key = `dashboard:${userId}`;
+        const cacheData = {
+            ...data,
+            generatedAt: new Date()
+        };
+        await this.set(key, cacheData, ttlSeconds);
+        logger.debug('Dashboard data cached', { userId });
+    }
+
+    public async getDashboardData(userId: string): Promise<DashboardData | null> {
+        const key = `dashboard:${userId}`;
+        const data = await this.get<DashboardData>(key);
+        logger.debug(data ? 'Dashboard cache hit' : 'Dashboard cache miss', { userId });
+        return data;
+    }
+
+    /**
+     * User-specific cache operations
+     */
+    public async invalidateUserCache(userId: string): Promise<void> {
+        const patterns = [
+            `session:*:${userId}`,
+            `dashboard:${userId}`,
+            `user:${userId}:*`,
+            `budget:${userId}:*`,
+            `transaction:${userId}:*`
+        ];
+
+        for (const pattern of patterns) {
+            const keys = await this.keys(pattern);
+            if (keys.length > 0) {
+                await this.redisClient!.del(keys);
+                this.stats.deletes += keys.length;
+            }
+        }
+
+        logger.info('User cache invalidated', { userId, patterns });
+    }
+
+    /**
+     * Rate Limiting Support
+     */
+    public async incrementRateLimit(key: string, windowSeconds: number = 60): Promise<{ count: number; ttl: number }> {
+        try {
+            if (!this.redisClient) {
+                await this.initialize();
+            }
+
+            const rateLimitKey = `rate_limit:${key}`;
+            const count = await this.redisClient!.incr(rateLimitKey);
+            
+            if (count === 1) {
+                await this.redisClient!.expire(rateLimitKey, windowSeconds);
+            }
+            
+            const ttl = await this.redisClient!.ttl(rateLimitKey);
+            
+            return { count, ttl };
+        } catch (error) {
+            this.stats.errors++;
+            logger.error('Rate limit increment failed', error, { key });
+            throw error;
+        }
+    }
+
+    /**
+     * Health and Statistics
+     */
+    public async isHealthy(): Promise<boolean> {
+        try {
+            if (!this.redisClient) {
+                return false;
+            }
+            await this.redisClient.ping();
+            return true;
+        } catch (error) {
+            logger.error('Cache health check failed', error);
+            return false;
+        }
+    }
+
+    public getStats(): CacheStats {
+        return { ...this.stats };
+    }
+
+    public resetStats(): void {
+        this.stats = {
+            hits: 0,
+            misses: 0,
+            sets: 0,
+            deletes: 0,
+            errors: 0,
+            hitRate: 0
+        };
+        logger.info('Cache statistics reset');
+    }
+
+    private updateHitRate(): void {
+        const total = this.stats.hits + this.stats.misses;
+        this.stats.hitRate = total > 0 ? (this.stats.hits / total) * 100 : 0;
+    }
+
+    /**
+     * Cache warming for frequently accessed data
+     */
+    public async warmCache(userId: string): Promise<void> {
+        try {
+            logger.info('Starting cache warming for user', { userId });
+            
+            // Warm up dashboard data would be implemented here
+            // For now, we'll just log the intent
+            logger.info('Cache warming completed', { userId });
+        } catch (error) {
+            logger.error('Cache warming failed', error, { userId });
         }
     }
 }

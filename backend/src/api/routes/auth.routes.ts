@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { logger } from '../../infrastructure/monitoring/logger.service';
 import { MetricsService } from '../../infrastructure/monitoring/metrics.service';
 import { authController } from '../controllers/auth.controller';
+import { jwtMiddleware } from '../middlewares/jwt.middleware';
+import { AuthRateLimitMiddleware } from '../middlewares/auth-rate-limit.middleware';
 
 // Tipos para as requests de autenticação
 interface LoginRequest {
@@ -169,11 +171,23 @@ const registerSchema = {
 export default async function authRoutes(fastify: FastifyInstance) {
     const routeContext = logger.child({ module: 'auth-routes' });
 
-    // Login endpoint
-    fastify.post<{ Body: LoginRequest }>('/login', { schema: loginSchema }, authController.login.bind(authController));
+    // Login endpoint with rate limiting
+    fastify.post<{ Body: LoginRequest }>('/login', {
+        schema: loginSchema,
+        preHandler: [
+            jwtMiddleware.validateSecurityHeaders,
+            AuthRateLimitMiddleware.loginRateLimit()
+        ]
+    }, authController.login.bind(authController));
 
-    // Register endpoint
-    fastify.post<{ Body: RegisterRequest }>('/register', { schema: registerSchema }, authController.register.bind(authController));
+    // Register endpoint with rate limiting
+    fastify.post<{ Body: RegisterRequest }>('/register', {
+        schema: registerSchema,
+        preHandler: [
+            jwtMiddleware.validateSecurityHeaders,
+            AuthRateLimitMiddleware.registrationRateLimit()
+        ]
+    }, authController.register.bind(authController));
 
     // Refresh token endpoint
     fastify.post<{ Body: RefreshTokenRequest }>('/refresh', {
@@ -189,7 +203,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         }
     }, authController.refreshToken.bind(authController));
 
-    // Forgot password endpoint
+    // Forgot password endpoint with rate limiting
     fastify.post<{ Body: ForgotPasswordRequest }>('/forgot-password', {
         schema: {
             tags: ['Auth'],
@@ -201,7 +215,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     email: { type: 'string', format: 'email' }
                 }
             }
-        }
+        },
+        preHandler: [
+            jwtMiddleware.validateSecurityHeaders,
+            AuthRateLimitMiddleware.passwordResetRateLimit()
+        ]
     }, async (request, reply) => {
         try {
             const { email } = request.body;
@@ -282,7 +300,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         }
     });
 
-    // Logout endpoint
+    // Logout endpoint (requires authentication)
     fastify.post('/logout', {
         schema: {
             tags: ['Auth'],
@@ -293,10 +311,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     authorization: { type: 'string' }
                 }
             }
-        }
+        },
+        preHandler: [jwtMiddleware.authenticate]
     }, authController.logout.bind(authController));
 
-    // User profile endpoint
+    // User profile endpoint (requires authentication)
     fastify.get('/me', {
         schema: {
             tags: ['Auth'],
@@ -307,7 +326,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     authorization: { type: 'string' }
                 }
             }
-        }
+        },
+        preHandler: [jwtMiddleware.authenticate]
     }, authController.me.bind(authController));
 
     // Token validation endpoint
@@ -373,4 +393,4 @@ export default async function authRoutes(fastify: FastifyInstance) {
     routeContext.info('Auth routes registered successfully');
 }
 
-export default authRoutes;
+// authRoutes já é exportado como default na declaração da função

@@ -1,336 +1,352 @@
 // backend/src/core/domain/services/ledger.service.ts
-
-// Removed NestJS dependency
-import { TransactionEntity } from '../entities/transaction.entity';
-import { LedgerEntryEntity } from '../entities/ledger-entry.entity';
+import { JournalEntryEntity, JournalEntryStatus } from '../entities/journal-entry.entity';
+import { LedgerEntryEntity, AccountType, EntryType, ReferenceType } from '../entities/ledger-entry.entity';
 import { Money } from '../value-objects/money.vo';
+import { UnitOfWork } from './unit-of-work.service';
 import { logger } from '../../../infrastructure/monitoring/logger.service';
 
-export interface DoubleEntryTransaction {
+export interface CreateJournalEntryCommand {
+    userId: string;
     transactionId: string;
     description: string;
-    amount: Money;
-    debitAccount: string;
-    creditAccount: string;
-    date: Date;
     reference?: string;
+    entries: CreateLedgerEntryCommand[];
+    metadata?: Record<string, any>;
+}
+
+export interface CreateLedgerEntryCommand {
+    accountId: string;
+    accountName: string;
+    accountType: AccountType;
+    entryType: EntryType;
+    amount: Money;
+    description: string;
+    referenceId?: string;
+    referenceType?: ReferenceType;
+    metadata?: Record<string, any>;
 }
 
 export interface LedgerBalance {
     accountId: string;
     accountName: string;
-    accountType: 'asset' | 'liability' | 'equity' | 'income' | 'expense';
+    accountType: AccountType;
     balance: Money;
-    lastUpdated: Date;
+    debitTotal: Money;
+    creditTotal: Money;
+    entryCount: number;
+}
+
+export interface TrialBalance {
+    currency: string;
+    accounts: LedgerBalance[];
+    totalDebits: Money;
+    totalCredits: Money;
+    isBalanced: boolean;
+    asOfDate: Date;
 }
 
 export class LedgerService {
-    constructor() {}
+    constructor(private unitOfWork: UnitOfWork) {}
 
     /**
-     * Creates double-entry ledger entries for a transaction
-     * Following accounting principles: Assets = Liabilities + Equity
+     * Creates a double-entry journal entry with automatic validation
      */
-    async createDoubleEntryLedgerEntries(
-        transaction: TransactionEntity
-    ): Promise<LedgerEntryEntity[]> {
+    async createJournalEntry(command: CreateJournalEntryCommand): Promise<JournalEntryEntity> {
         try {
-            logger.debug('Creating double-entry ledger entries', { 
-                transactionId: transaction.getId() 
+            logger.debug('Creating journal entry', {
+                transactionId: command.transactionId,
+                userId: command.userId,
+                entriesCount: command.entries.length
             });
 
-            const entries: LedgerEntryEntity[] = [];
-            const amount = transaction.getAmount();
-            const date = transaction.getDate();
-            const description = transaction.getDescription();
+            // Validate entries before creation
+            this.validateJournalEntryCommand(command);
 
-            // Determine debit and credit accounts based on transaction type
-            const { debitAccount, creditAccount } = this.determineAccounts(transaction);
+            // Create ledger entries
+            const ledgerEntries: LedgerEntryEntity[] = [];
+            const journalEntryId = `JE-${command.transactionId}-${Date.now()}`;
 
-            // Create debit entry
-            const debitEntry = LedgerEntryEntity.create({
-                id: `ledger-${transaction.getId()}-debit`,
-                transactionId: transaction.getId(),
-                accountId: debitAccount,
-                entryType: 'debit',
-                amount: amount,
-                description: `${description} (Debit)`,
-                date: date,
-                reference: transaction.getReference(),
-                createdBy: transaction.getUserId()
-            });
+            for (const entryCommand of command.entries) {
+                const ledgerEntry = new LedgerEntryEntity({
+                    id: `LE-${journalEntryId}-${ledgerEntries.length + 1}`,
+                    transactionId: command.transactionId,
+                    accountId: entryCommand.accountId,
+                    accountName: entryCommand.accountName,
+                    accountType: entryCommand.accountType,
+                    entryType: entryCommand.entryType,
+                    amount: entryCommand.amount,
+                    description: entryCommand.description,
+                    referenceId: entryCommand.referenceId,
+                    referenceType: entryCommand.referenceType,
+                    metadata: entryCommand.metadata,
+                    journalEntryId: journalEntryId,
+                    postedAt: new Date(),
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                });
 
-            // Create credit entry
-            const creditEntry = LedgerEntryEntity.create({
-                id: `ledger-${transaction.getId()}-credit`, 
-                transactionId: transaction.getId(),
-                accountId: creditAccount,
-                entryType: 'credit',
-                amount: amount,
-                description: `${description} (Credit)`,
-                date: date,
-                reference: transaction.getReference(),
-                createdBy: transaction.getUserId()
-            });
-
-            entries.push(debitEntry, creditEntry);
-
-            logger.info('Double-entry ledger entries created', {
-                transactionId: transaction.getId(),
-                entriesCount: entries.length,
-                debitAccount,
-                creditAccount,
-                amount: amount.getAmount()
-            });
-
-            return entries;
-
-        } catch (error) {
-            logger.error('Failed to create double-entry ledger entries', error as Error, {
-                transactionId: transaction.getId()
-            });
-            throw error;
-        }
-    }
-
-    /**
-     * Validates that ledger entries balance (debits = credits)
-     */
-    validateLedgerBalance(entries: LedgerEntryEntity[]): {
-        isBalanced: boolean;
-        totalDebits: Money;
-        totalCredits: Money;
-        variance?: Money;
-    } {
-        let totalDebits = 0;
-        let totalCredits = 0;
-        let currency = 'BRL';
-
-        entries.forEach(entry => {
-            currency = entry.getAmount().getCurrency();
-            if (entry.getEntryType() === 'debit') {
-                totalDebits += entry.getAmount().getAmount();
-            } else {
-                totalCredits += entry.getAmount().getAmount();
+                ledgerEntries.push(ledgerEntry);
             }
-        });
 
-        const debitsMoney = new Money(totalDebits, currency);
-        const creditsMoney = new Money(totalCredits, currency);
-        const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01; // Allow for rounding
+            // Calculate total amount (sum of all debits or credits, they should be equal)
+            const totalDebitAmount = ledgerEntries
+                .filter(entry => entry.entryType === EntryType.DEBIT)
+                .reduce((sum, entry) => sum + entry.amount.getAmount(), 0);
 
-        return {
-            isBalanced,
-            totalDebits: debitsMoney,
-            totalCredits: creditsMoney,
-            variance: !isBalanced 
-                ? new Money(Math.abs(totalDebits - totalCredits), currency)
-                : undefined
-        };
-    }
+            // Use the debit total as the journal entry amount
+            const totalAmount = new Money(totalDebitAmount, ledgerEntries[0].amount.getCurrency());
 
-    /**
-     * Calculates account balances from ledger entries
-     */
-    async calculateAccountBalances(
-        accountIds: string[],
-        asOfDate?: Date
-    ): Promise<LedgerBalance[]> {
-        try {
-            logger.debug('Calculating account balances', { 
-                accountCount: accountIds.length,
-                asOfDate 
+            // Create journal entry
+            const journalEntry = new JournalEntryEntity({
+                id: journalEntryId,
+                userId: command.userId,
+                transactionId: command.transactionId,
+                description: command.description,
+                reference: command.reference,
+                status: JournalEntryStatus.DRAFT,
+                entries: ledgerEntries,
+                totalAmount: totalAmount,
+                metadata: command.metadata,
+                createdAt: new Date(),
+                updatedAt: new Date()
             });
 
-            // Mock calculation - replace with actual repository query
-            const balances: LedgerBalance[] = accountIds.map(accountId => {
-                // Mock balance calculation
-                const mockBalance = this.generateMockBalance(accountId);
-                
-                return {
-                    accountId,
-                    accountName: this.getAccountName(accountId),
-                    accountType: this.getAccountType(accountId),
-                    balance: mockBalance,
-                    lastUpdated: asOfDate || new Date()
-                };
+            // Validate balance before posting
+            if (!journalEntry.isBalanced()) {
+                throw new Error('Journal entry is not balanced - debits must equal credits');
+            }
+
+            // Post the journal entry
+            journalEntry.post();
+
+            // Capture and publish domain events from the entity
+            const domainEvents = journalEntry.getDomainEvents();
+            for (const event of domainEvents) {
+                this.unitOfWork.addDomainEvent(event);
+            }
+            journalEntry.clearDomainEvents();
+
+            // Track changes in Unit of Work
+            this.unitOfWork.trackChange(journalEntry.id, journalEntry, 'INSERT');
+            
+            for (const entry of ledgerEntries) {
+                this.unitOfWork.trackChange(entry.id, entry, 'INSERT');
+            }
+
+            logger.info('Journal entry created successfully', {
+                journalEntryId: journalEntry.id,
+                transactionId: command.transactionId,
+                totalAmount: totalAmount.getAmount(),
+                currency: totalAmount.getCurrency(),
+                entriesCount: ledgerEntries.length
             });
 
-            logger.info('Account balances calculated', {
-                accountCount: balances.length,
-                asOfDate
-            });
-
-            return balances;
+            return journalEntry;
 
         } catch (error) {
-            logger.error('Failed to calculate account balances', error as Error, {
-                accountIds,
-                asOfDate
+            logger.error('Failed to create journal entry', error as Error, {
+                transactionId: command.transactionId,
+                userId: command.userId
             });
             throw error;
         }
     }
 
     /**
-     * Generates trial balance report
+     * Creates a simple two-entry journal entry (most common case)
      */
-    async generateTrialBalance(asOfDate?: Date): Promise<{
-        asOfDate: Date;
-        accounts: Array<{
-            accountId: string;
-            accountName: string;
-            accountType: 'asset' | 'liability' | 'equity' | 'income' | 'expense';
-            debitBalance?: Money;
-            creditBalance?: Money;
-        }>;
-        totals: {
-            totalDebits: Money;
-            totalCredits: Money;
-            isBalanced: boolean;
+    async createSimpleEntry(
+        userId: string,
+        transactionId: string,
+        description: string,
+        debitAccount: { id: string; name: string; type: AccountType },
+        creditAccount: { id: string; name: string; type: AccountType },
+        amount: Money,
+        reference?: string
+    ): Promise<JournalEntryEntity> {
+        const command: CreateJournalEntryCommand = {
+            userId,
+            transactionId,
+            description,
+            reference,
+            entries: [
+                {
+                    accountId: debitAccount.id,
+                    accountName: debitAccount.name,
+                    accountType: debitAccount.type,
+                    entryType: EntryType.DEBIT,
+                    amount: amount,
+                    description: description
+                },
+                {
+                    accountId: creditAccount.id,
+                    accountName: creditAccount.name,
+                    accountType: creditAccount.type,
+                    entryType: EntryType.CREDIT,
+                    amount: amount,
+                    description: description
+                }
+            ]
         };
-    }> {
-        try {
-            const reportDate = asOfDate || new Date();
-            logger.debug('Generating trial balance', { asOfDate: reportDate });
 
-            // Mock trial balance generation
-            const accounts = [
-                {
-                    accountId: 'acc-cash',
-                    accountName: 'Cash',
-                    accountType: 'asset' as const,
-                    debitBalance: new Money(5000.00, 'BRL')
-                },
-                {
-                    accountId: 'acc-checking',
-                    accountName: 'Checking Account',
-                    accountType: 'asset' as const,
-                    debitBalance: new Money(12500.50, 'BRL')
-                },
-                {
-                    accountId: 'acc-savings',
-                    accountName: 'Savings Account',
-                    accountType: 'asset' as const,
-                    debitBalance: new Money(8750.75, 'BRL')
-                },
-                {
-                    accountId: 'acc-credit-card',
-                    accountName: 'Credit Card',
-                    accountType: 'liability' as const,
-                    creditBalance: new Money(2300.25, 'BRL')
-                },
-                {
-                    accountId: 'acc-salary',
-                    accountName: 'Salary Income',
-                    accountType: 'income' as const,
-                    creditBalance: new Money(15000.00, 'BRL')
-                },
-                {
-                    accountId: 'acc-food',
-                    accountName: 'Food Expenses',
-                    accountType: 'expense' as const,
-                    debitBalance: new Money(1950.00, 'BRL')
-                }
-            ];
+        return this.createJournalEntry(command);
+    }
 
-            const totalDebits = accounts
-                .filter(acc => acc.debitBalance)
-                .reduce((sum, acc) => sum + (acc.debitBalance?.getAmount() || 0), 0);
+    /**
+     * Creates journal entries for common transaction types
+     */
+    async recordIncomeTransaction(
+        userId: string,
+        transactionId: string,
+        description: string,
+        bankAccountId: string,
+        incomeAccountId: string,
+        amount: Money
+    ): Promise<JournalEntryEntity> {
+        // Debit: Bank Account (Asset increases)
+        // Credit: Income Account (Revenue increases)
+        return this.createSimpleEntry(
+            userId,
+            transactionId,
+            description,
+            { id: bankAccountId, name: 'Bank Account', type: AccountType.ASSET },
+            { id: incomeAccountId, name: 'Income', type: AccountType.REVENUE },
+            amount
+        );
+    }
 
-            const totalCredits = accounts
-                .filter(acc => acc.creditBalance) 
-                .reduce((sum, acc) => sum + (acc.creditBalance?.getAmount() || 0), 0);
+    /**
+     * Creates journal entries for expense transactions
+     */
+    async recordExpenseTransaction(
+        userId: string,
+        transactionId: string,
+        description: string,
+        expenseAccountId: string,
+        bankAccountId: string,
+        amount: Money
+    ): Promise<JournalEntryEntity> {
+        // Debit: Expense Account (Expense increases)
+        // Credit: Bank Account (Asset decreases)
+        return this.createSimpleEntry(
+            userId,
+            transactionId,
+            description,
+            { id: expenseAccountId, name: 'Expense', type: AccountType.EXPENSE },
+            { id: bankAccountId, name: 'Bank Account', type: AccountType.ASSET },
+            amount
+        );
+    }
 
-            const trialBalance = {
-                asOfDate: reportDate,
-                accounts,
-                totals: {
-                    totalDebits: new Money(totalDebits, 'BRL'),
-                    totalCredits: new Money(totalCredits, 'BRL'),
-                    isBalanced: Math.abs(totalDebits - totalCredits) < 0.01
-                }
-            };
+    /**
+     * Creates journal entries for transfer transactions
+     */
+    async recordTransferTransaction(
+        userId: string,
+        transactionId: string,
+        description: string,
+        fromAccountId: string,
+        toAccountId: string,
+        amount: Money
+    ): Promise<JournalEntryEntity> {
+        // Debit: To Account (Asset increases)
+        // Credit: From Account (Asset decreases)
+        return this.createSimpleEntry(
+            userId,
+            transactionId,
+            description,
+            { id: toAccountId, name: 'To Account', type: AccountType.ASSET },
+            { id: fromAccountId, name: 'From Account', type: AccountType.ASSET },
+            amount
+        );
+    }
 
-            logger.info('Trial balance generated', {
-                asOfDate: reportDate,
-                accountCount: accounts.length,
-                totalDebits,
-                totalCredits,
-                isBalanced: trialBalance.totals.isBalanced
-            });
+    /**
+     * Validates journal entry command
+     */
+    private validateJournalEntryCommand(command: CreateJournalEntryCommand): void {
+        if (!command.userId || command.userId.trim().length === 0) {
+            throw new Error('User ID is required');
+        }
 
-            return trialBalance;
+        if (!command.transactionId || command.transactionId.trim().length === 0) {
+            throw new Error('Transaction ID is required');
+        }
 
-        } catch (error) {
-            logger.error('Failed to generate trial balance', error as Error, { asOfDate });
-            throw error;
+        if (!command.description || command.description.trim().length === 0) {
+            throw new Error('Description is required');
+        }
+
+        if (!command.entries || command.entries.length < 2) {
+            throw new Error('At least two ledger entries are required for double-entry accounting');
+        }
+
+        // Validate each entry
+        for (const entry of command.entries) {
+            this.validateLedgerEntryCommand(entry);
+        }
+
+        // Validate balance by currency
+        const currencyTotals = new Map<string, { debits: number; credits: number }>();
+
+        for (const entry of command.entries) {
+            const currency = entry.amount.getCurrency();
+            if (!currencyTotals.has(currency)) {
+                currencyTotals.set(currency, { debits: 0, credits: 0 });
+            }
+
+            const totals = currencyTotals.get(currency)!;
+            const amount = entry.amount.getAmount();
+
+            if (entry.entryType === EntryType.DEBIT) {
+                totals.debits += amount;
+            } else {
+                totals.credits += amount;
+            }
+        }
+
+        // Check balance for each currency
+        for (const [currency, totals] of currencyTotals) {
+            if (Math.abs(totals.debits - totals.credits) > 0.01) {
+                throw new Error(`Journal entry is not balanced for currency ${currency}. Debits: ${totals.debits}, Credits: ${totals.credits}`);
+            }
         }
     }
 
-    private determineAccounts(transaction: TransactionEntity): {
-        debitAccount: string;
-        creditAccount: string;
-    } {
-        // Simplified account determination logic
-        const transactionType = transaction.getType();
-        const amount = transaction.getAmount().getAmount();
-
-        if (transactionType === 'income') {
-            return {
-                debitAccount: 'acc-checking', // Asset account increases
-                creditAccount: 'acc-income'    // Income account increases
-            };
-        } else if (transactionType === 'expense') {
-            return {
-                debitAccount: 'acc-expense',   // Expense account increases
-                creditAccount: 'acc-checking'  // Asset account decreases
-            };
-        } else { // transfer
-            return {
-                debitAccount: transaction.getToAccountId() || 'acc-checking',
-                creditAccount: transaction.getFromAccountId() || 'acc-checking'
-            };
+    /**
+     * Validates individual ledger entry command
+     */
+    private validateLedgerEntryCommand(entry: CreateLedgerEntryCommand): void {
+        if (!entry.accountId || entry.accountId.trim().length === 0) {
+            throw new Error('Account ID is required');
         }
-    }
 
-    private generateMockBalance(accountId: string): Money {
-        const mockBalances = {
-            'acc-cash': 5000.00,
-            'acc-checking': 12500.50,
-            'acc-savings': 8750.75,
-            'acc-credit-card': -2300.25,
-            'acc-salary': -15000.00,
-            'acc-food': 1950.00
-        };
+        if (!entry.accountName || entry.accountName.trim().length === 0) {
+            throw new Error('Account name is required');
+        }
 
-        const balance = mockBalances[accountId as keyof typeof mockBalances] || Math.random() * 10000;
-        return new Money(balance, 'BRL');
-    }
+        if (!Object.values(AccountType).includes(entry.accountType)) {
+            throw new Error('Valid account type is required');
+        }
 
-    private getAccountName(accountId: string): string {
-        const accountNames = {
-            'acc-cash': 'Cash',
-            'acc-checking': 'Checking Account', 
-            'acc-savings': 'Savings Account',
-            'acc-credit-card': 'Credit Card',
-            'acc-salary': 'Salary Income',
-            'acc-food': 'Food Expenses'
-        };
+        if (!Object.values(EntryType).includes(entry.entryType)) {
+            throw new Error('Valid entry type is required');
+        }
 
-        return accountNames[accountId as keyof typeof accountNames] || `Account ${accountId}`;
-    }
+        if (!entry.amount || entry.amount.getAmount() <= 0) {
+            throw new Error('Entry amount must be positive');
+        }
 
-    private getAccountType(accountId: string): 'asset' | 'liability' | 'equity' | 'income' | 'expense' {
-        const accountTypes = {
-            'acc-cash': 'asset',
-            'acc-checking': 'asset',
-            'acc-savings': 'asset', 
-            'acc-credit-card': 'liability',
-            'acc-salary': 'income',
-            'acc-food': 'expense'
-        };
+        if (!entry.description || entry.description.trim().length === 0) {
+            throw new Error('Entry description is required');
+        }
 
-        return accountTypes[accountId as keyof typeof accountTypes] as any || 'asset';
+        if (entry.referenceType && !entry.referenceId) {
+            throw new Error('Reference ID is required when reference type is specified');
+        }
+
+        if (entry.referenceId && !entry.referenceType) {
+            throw new Error('Reference type is required when reference ID is specified');
+        }
     }
 }

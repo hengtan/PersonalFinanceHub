@@ -1,12 +1,16 @@
 import fastify, { FastifyInstance } from 'fastify';
 import { logger } from './infrastructure/monitoring/logger.service';
 import { MetricsService } from './infrastructure/monitoring/metrics.service';
+import { PerformanceService } from './infrastructure/monitoring/performance.service';
+import { EventHandlerRegistry } from './core/application/services/event-handler-registry.service';
+import { CompressionMiddleware } from './api/middlewares/compression.middleware';
+import { CacheService } from './infrastructure/cache/cache.service';
 
 // Import route modules
 import authRoutes from './api/routes/auth.routes';
 import dashboardRoutes from './api/routes/dashboard.routes';
 import transactionRoutes from './api/routes/transaction.routes';
-// import budgetRoutes from './api/routes/budget.routes';
+import budgetRoutes from './api/routes/budget.routes';
 
 // import userRoutes from './api/routes/user.routes';
 // import transactionRoutes from './api/routes/transaction.routes';
@@ -30,6 +34,8 @@ export interface AppConfig {
 export class App {
     private fastify: FastifyInstance;
     private config: AppConfig;
+    private cacheService: CacheService;
+    private performanceService: PerformanceService;
 
     constructor(config?: Partial<AppConfig>) {
         this.config = {
@@ -51,6 +57,10 @@ export class App {
             requestTimeout: 30000,
             bodyLimit: 1048576 * 10, // 10MB
         });
+
+        // Initialize performance services
+        this.cacheService = CacheService.getInstance();
+        this.performanceService = PerformanceService.getInstance();
     }
 
     public async initialize(): Promise<void> {
@@ -67,12 +77,16 @@ export class App {
             await this.setupPlugins();
             logger.info('🛡️ Setting up middlewares...');
             await this.setupMiddlewares();
+            logger.info('⚡ Setting up performance optimizations...');
+            await this.setupPerformanceOptimizations();
             logger.info('🛣️ Setting up routes...');
             await this.setupRoutes();
             logger.info('❤️ Setting up health check...');
             await this.setupHealthCheck();
             logger.info('🚨 Setting up error handlers...');
             await this.setupErrorHandlers();
+            logger.info('📧 Setting up event handlers...');
+            EventHandlerRegistry.initialize();
 
             logger.info('Application initialized successfully');
 
@@ -183,6 +197,9 @@ export class App {
                 // Middleware para adicionar headers de API versioning
                 reply.header('X-API-Version', this.config.apiVersion);
                 reply.header('X-Environment', this.config.environment);
+
+                // Apply compression middleware
+                await CompressionMiddleware.compress(request, reply);
             });
 
             // Response logging middleware (simplificado para testes)
@@ -243,6 +260,65 @@ export class App {
         }
     }
 
+    private async setupPerformanceOptimizations(): Promise<void> {
+        try {
+            // Initialize cache service
+            await this.cacheService.initialize();
+            logger.info('Cache service initialized');
+
+            // Configure compression settings
+            CompressionMiddleware.configure({
+                threshold: 1024, // 1KB minimum for compression
+                level: 6, // Balanced compression
+                enableGzip: true,
+                enableBrotli: true,
+                enableCaching: true,
+                cacheMaxAge: 3600 // 1 hour cache
+            });
+
+            // Add performance monitoring hooks
+            this.fastify.addHook('onResponse', async (request, reply) => {
+                const responseTime = Date.now() - ((request as any).startTime || Date.now());
+                this.performanceService.recordHttpRequest(responseTime, reply.statusCode);
+            });
+
+            // Add performance metrics endpoint
+            this.fastify.get('/api/performance', {
+                schema: {
+                    tags: ['Performance'],
+                    description: 'Performance metrics and health score',
+                    response: {
+                        200: {
+                            type: 'object',
+                            properties: {
+                                healthScore: { type: 'number' },
+                                metrics: { type: 'object' },
+                                alerts: { type: 'array' }
+                            }
+                        }
+                    }
+                }
+            }, async (request, reply) => {
+                const metrics = this.performanceService.getMetrics();
+                const alerts = this.performanceService.getAlerts(10);
+                const healthScore = this.performanceService.getHealthScore();
+
+                return reply.send({
+                    healthScore,
+                    metrics,
+                    alerts,
+                    timestamp: new Date().toISOString()
+                });
+            });
+
+            logger.info('Performance optimizations configured successfully');
+
+        } catch (error) {
+            logger.error('Failed to setup performance optimizations', error as Error);
+            throw error;
+        }
+    }
+
     private async setupRoutes(): Promise<void> {
         try {
             logger.info('🔄 Setting up routes...');
@@ -275,10 +351,10 @@ export class App {
             //   prefix: `${versionedPrefix}/accounts`
             // });
 
-            // Budget management routes (temporarily disabled)
-            // await this.fastify.register(budgetRoutes, {
-            //     prefix: `${basePrefix}/budgets`
-            // });
+            // Budget management routes
+            await this.fastify.register(budgetRoutes, {
+                prefix: `${basePrefix}/budgets`
+            });
 
             // Category management routes (commented until implemented)
             // await this.fastify.register(categoryRoutes, {

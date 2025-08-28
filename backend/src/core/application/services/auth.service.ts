@@ -44,6 +44,21 @@ export class AuthService {
         }
     }
 
+    /**
+     * Hash password using bcrypt
+     */
+    async hashPassword(password: string): Promise<string> {
+        const saltRounds = 12;
+        return bcrypt.hash(password, saltRounds);
+    }
+
+    /**
+     * Verify password against hash
+     */
+    async verifyPassword(password: string, hash: string): Promise<boolean> {
+        return bcrypt.compare(password, hash);
+    }
+
     async login(credentials: LoginCredentials): Promise<{ user: AuthUser; tokens: TokenPair }> {
         try {
             // Validar credenciais
@@ -272,7 +287,92 @@ export class AuthService {
         try {
             return jwt.verify(token, this.JWT_SECRET);
         } catch (error) {
-            throw new BusinessException('Invalid token', 'INVALID_TOKEN', 401);
+            if (error instanceof jwt.TokenExpiredError) {
+                throw new BusinessException('Token expired', 'TOKEN_EXPIRED', 401);
+            } else if (error instanceof jwt.JsonWebTokenError) {
+                throw new BusinessException('Invalid token', 'INVALID_TOKEN', 401);
+            }
+            throw new BusinessException('Token verification failed', 'TOKEN_VERIFICATION_FAILED', 401);
+        }
+    }
+
+    /**
+     * Extract Bearer token from Authorization header
+     */
+    extractTokenFromHeader(authHeader: string | undefined): string | null {
+        if (!authHeader) {
+            return null;
+        }
+
+        const parts = authHeader.split(' ');
+        if (parts.length !== 2 || parts[0] !== 'Bearer') {
+            return null;
+        }
+
+        return parts[1];
+    }
+
+    /**
+     * Validate password strength
+     */
+    validatePasswordStrength(password: string): { isValid: boolean; errors: string[] } {
+        const errors: string[] = [];
+        
+        if (password.length < 8) {
+            errors.push('Password must be at least 8 characters long');
+        }
+        
+        if (!/[A-Z]/.test(password)) {
+            errors.push('Password must contain at least one uppercase letter');
+        }
+        
+        if (!/[a-z]/.test(password)) {
+            errors.push('Password must contain at least one lowercase letter');
+        }
+        
+        if (!/\d/.test(password)) {
+            errors.push('Password must contain at least one number');
+        }
+        
+        if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+            errors.push('Password must contain at least one special character');
+        }
+
+        return {
+            isValid: errors.length === 0,
+            errors
+        };
+    }
+
+    /**
+     * Generate secure random token (for password reset, email verification, etc.)
+     */
+    generateSecureToken(length: number = 32): string {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let result = '';
+        const charactersLength = characters.length;
+        
+        for (let i = 0; i < length; i++) {
+            result += characters.charAt(Math.floor(Math.random() * charactersLength));
+        }
+        
+        return result;
+    }
+
+    /**
+     * Check if token is expired without throwing error
+     */
+    isTokenExpired(token: string): boolean {
+        try {
+            const decoded = jwt.decode(token) as any;
+            if (!decoded || !decoded.exp) {
+                return true;
+            }
+            
+            const now = Math.floor(Date.now() / 1000);
+            return decoded.exp < now;
+        } catch (error) {
+            return true;
         }
     }
 }

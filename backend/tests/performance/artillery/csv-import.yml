@@ -1,0 +1,363 @@
+# tests/performance/artillery/csv-import.yml
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3333' }}"
+  phases:
+    - duration: 120
+      arrivalRate: 2
+      name: "CSV Import warm up"
+    - duration: 300
+      arrivalRate: 5
+      name: "Steady import load"
+    - duration: 180
+      arrivalRate: 10
+      name: "Peak import load"
+    - duration: 120
+      arrivalRate: 2
+      name: "Cool down"
+  
+  payload:
+    path: "./test-data/csv-samples.csv"
+    fields:
+      - "csvSize"
+      - "csvContent"
+      - "expectedRows"
+  
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      User-Agent: "Artillery-CSVImport-LoadTest"
+  
+  plugins:
+    expect: {}
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+    
+  processor: "./processors/csv-import.js"
+
+scenarios:
+  - name: "CSV Import Performance - Sprint 4"
+    weight: 100
+    flow:
+      # Authentication
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "csvtest@example.com"
+            password: "password123"
+          capture:
+            - json: "$.data.tokens.accessToken"
+              as: "accessToken"
+            - json: "$.data.user.id"
+              as: "userId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.tokens.accessToken"
+      
+      # Set authorization header
+      - function: "setAuthHeader"
+      
+      # Test 1: CSV Preview and Analysis
+      - post:
+          url: "/api/transactions/csv/preview"
+          json:
+            csvData: |
+              Date,Amount,Description,Category
+              2024-01-01,"-50.00","Grocery Store","Food"
+              2024-01-02,"2500.00","Salary","Income"
+              2024-01-03,"-25.50","Gas Station","Transport"
+              2024-01-04,"-120.00","Electric Bill","Utilities"
+              2024-01-05,"-35.75","Restaurant","Food"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dateFormat: "YYYY-MM-DD"
+              currency: "BRL"
+          name: "CSV Preview Small File"
+          capture:
+            - json: "$.data.suggestedMapping"
+              as: "mapping"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.headers"
+            - hasProperty: "data.suggestedMapping"
+            - hasProperty: "data.columnAnalysis"
+      
+      # Test 2: Small CSV Import (< 100 rows)
+      - function: "generateSmallCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ smallCsvData }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dateFormat: "YYYY-MM-DD"
+              currency: "BRL"
+              duplicateHandling: "skip"
+              validationMode: "strict"
+              dryRun: false
+          name: "Small CSV Import"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.importId"
+            - hasProperty: "data.successfulImports"
+      
+      # Test 3: Medium CSV Import (100-1000 rows)
+      - function: "generateMediumCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ mediumCsvData }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+              accountField: "Account"
+              notesField: "Notes"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dateFormat: "YYYY-MM-DD"
+              currency: "BRL"
+              duplicateHandling: "skip"
+              validationMode: "lenient"
+              batchSize: 50
+              dryRun: false
+          name: "Medium CSV Import"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.totalRows"
+            - property: "data.successfulImports"
+              gt: 0
+      
+      # Test 4: Large CSV Import (1000+ rows) - Dry Run
+      - function: "generateLargeCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ largeCsvData }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+              typeField: "Type"
+              referenceField: "Reference"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dateFormat: "YYYY-MM-DD"
+              currency: "BRL"
+              duplicateHandling: "create_new"
+              validationMode: "strict"
+              batchSize: 100
+              dryRun: true  # Dry run to avoid actually importing large dataset
+          name: "Large CSV Import (Dry Run)"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.totalRows"
+            - property: "data.totalRows"
+              gt: 1000
+      
+      # Think time for processing
+      - think: 2
+      
+      # Test 5: CSV with Validation Errors
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: |
+              Date,Amount,Description,Category
+              invalid-date,50.00,Test Transaction,Food
+              2024-01-02,not-a-number,Another Test,Transport
+              2024-01-03,,Empty Description,Utilities
+              ,100.00,No Date Transaction,Food
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              validationMode: "strict"
+              dryRun: true
+          name: "CSV Import with Validation Errors"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.errors"
+            - property: "data.failedImports"
+              gt: 0
+      
+      # Test 6: CSV Format Detection and Auto-mapping
+      - post:
+          url: "/api/transactions/csv/preview"
+          json:
+            csvData: |
+              Transaction Date;Amount;Merchant;Category Name;Account
+              01/02/2024;-75.50;Supermarket XYZ;Groceries;Checking
+              01/02/2024;2500.00;Employer ABC;Salary;Checking
+              02/02/2024;-30.00;Gas Station;Fuel;Credit Card
+            options:
+              # Let system auto-detect delimiter and date format
+              hasHeaders: true
+          name: "CSV Auto-detection"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.detectedDelimiter"
+            - hasProperty: "data.detectedDateFormat"
+            - hasProperty: "data.suggestedMapping"
+      
+      # Test 7: Concurrent CSV Processing
+      - function: "generateConcurrentCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ concurrentCsvData1 }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dryRun: true
+          name: "Concurrent CSV Import 1"
+          expect:
+            - statusCode: 200
+      
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ concurrentCsvData2 }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              dryRun: true
+          name: "Concurrent CSV Import 2"
+          expect:
+            - statusCode: 200
+      
+      # Test 8: CSV Import Status Check
+      - get:
+          url: "/api/transactions/csv/imports"
+          qs:
+            page: 1
+            limit: 10
+          name: "CSV Import History"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.imports"
+      
+      # Test 9: CSV Template Download
+      - get:
+          url: "/api/transactions/csv/template"
+          qs:
+            format: "csv"
+            includeExamples: true
+          name: "CSV Template Download"
+          expect:
+            - statusCode: 200
+            - contentType: "text/csv"
+      
+      # Test 10: Duplicate Detection Performance
+      - function: "generateDuplicateCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ duplicateCSV }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              duplicateHandling: "skip"
+              dryRun: true
+          name: "Duplicate Detection Test"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.duplicatesFound"
+      
+      # Test 11: Memory Usage with Large Files
+      - function: "generateMemoryTestCSV"
+      - post:
+          url: "/api/transactions/csv/preview"
+          json:
+            csvData: "{{ memoryTestCSV }}"
+            options:
+              hasHeaders: true
+          name: "Memory Usage Test"
+          expect:
+            - statusCode: 200
+            - maxResponseTime: 5000  # Max 5 seconds for large file preview
+      
+      # Test 12: Error Recovery and Partial Imports
+      - function: "generatePartialErrorCSV"
+      - post:
+          url: "/api/transactions/csv/import"
+          json:
+            csvData: "{{ partialErrorCSV }}"
+            mapping:
+              dateField: "Date"
+              amountField: "Amount"
+              descriptionField: "Description"
+              categoryField: "Category"
+            options:
+              delimiter: ","
+              hasHeaders: true
+              validationMode: "lenient"
+              dryRun: true
+          name: "Partial Import with Errors"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.successfulImports"
+            - hasProperty: "data.failedImports"
+            - hasProperty: "data.warnings"
+
+# Performance thresholds
+expect:
+  - statusCode: 200
+  - maxResponseTime: 30000  # 30 seconds max for large imports
+  - minResponseTime: 100    # Minimum sanity check
+
+# Custom metrics for CSV operations
+metrics:
+  - name: "csv_import_duration"
+    unit: "milliseconds"
+    
+  - name: "csv_processing_rate"
+    unit: "rows_per_second"
+    
+  - name: "csv_validation_errors"
+    unit: "count"
+    
+  - name: "csv_memory_usage"
+    unit: "megabytes"
+
+# Test hooks
+before:
+  flow:
+    - log: "🚀 Starting CSV Import Performance Test"
+    - log: "📊 Testing Sprint 4 key feature: CSV Import with Smart Detection"
+    - log: "📁 Testing various file sizes and validation scenarios"
+
+after:
+  flow:
+    - log: "🏁 CSV Import Performance Test Completed"
+    - log: "📈 Check metrics for import performance and validation accuracy"
+    - function: "generateCSVReport"

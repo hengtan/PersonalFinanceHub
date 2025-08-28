@@ -5,15 +5,15 @@ export class Money {
     readonly amount: number;
     readonly currency: Currency;
 
-    constructor(amount: number, currency: Currency = 'BRL') {
-        this.validateAmount(amount);
+    constructor(amount: number, currency: Currency = 'BRL', allowNegative: boolean = false) {
+        this.validateAmount(amount, allowNegative);
         this.validateCurrency(currency);
 
         this.amount = this.roundToTwoDecimals(amount);
         this.currency = currency;
     }
 
-    private validateAmount(amount: number): void {
+    private validateAmount(amount: number, allowNegative: boolean = false): void {
         if (typeof amount !== 'number') {
             throw new Error('Valor deve ser um número');
         }
@@ -22,7 +22,7 @@ export class Money {
             throw new Error('Valor deve ser um número finito');
         }
 
-        if (amount < 0) {
+        if (!allowNegative && amount < 0) {
             throw new Error('Valor não pode ser negativo');
         }
     }
@@ -88,6 +88,18 @@ export class Money {
 
     isZero(): boolean {
         return this.amount === 0;
+    }
+
+    getAmount(): number {
+        return this.amount;
+    }
+
+    getCurrency(): Currency {
+        return this.currency;
+    }
+
+    hasSameCurrency(other: Money): boolean {
+        return this.currency === other.currency;
     }
 
     private ensureSameCurrency(other: Money): void {

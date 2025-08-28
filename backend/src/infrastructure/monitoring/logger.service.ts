@@ -245,8 +245,7 @@ export class LoggerService {
 // Singleton instance
 export const logger = LoggerService.getInstance();
 
-// Export da classe para casos onde precisamos de instâncias específicas
-export { LoggerService };
+// LoggerService já é exportado como classe na declaração acima
 
 // Tipos utilitários para TypeScript
 export type { Logger } from 'pino';

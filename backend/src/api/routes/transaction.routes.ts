@@ -2,6 +2,7 @@
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../infrastructure/monitoring/logger.service';
 import { transactionController } from '../controllers/transaction.controller';
+import { jwtMiddleware } from '../middlewares/jwt.middleware';
 import {
     createTransactionSchema,
     updateTransactionSchema,
@@ -10,6 +11,9 @@ import {
 
 export default async function transactionRoutes(fastify: FastifyInstance) {
     const routeContext = logger.child({ module: 'transaction-routes' });
+
+    // Apply JWT authentication to all transaction routes
+    fastify.addHook('preHandler', jwtMiddleware.authenticate);
 
     // Create transaction
     fastify.post('/', {
@@ -227,4 +231,4 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
     routeContext.info('Transaction routes registered successfully');
 }
 
-export default transactionRoutes;
+// transactionRoutes already exported as default in function declaration above

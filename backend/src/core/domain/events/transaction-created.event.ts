@@ -20,7 +20,8 @@ export class TransactionCreatedEvent extends BaseDomainEvent {
         transactionId: string,
         private readonly payload: TransactionCreatedPayload
     ) {
-        super(transactionId, 'TransactionCreated');
+        super(transactionId, 'TransactionCreated', 'Transaction');
+        this.setUserId(payload.userId);
     }
 
     getPayload(): TransactionCreatedPayload {

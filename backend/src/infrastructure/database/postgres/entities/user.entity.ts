@@ -1,14 +1,18 @@
 // backend/src/infrastructure/database/postgres/entities/user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, DeleteDateColumn, Index } from 'typeorm';
 import { UserRole } from '../../../../core/domain/entities/user.entity';
 import { UserPreferences, ContactInfo } from '../../../../shared/types/common.types';
 
 @Entity('users')
+@Index(['email', 'isActive'])
+@Index(['lastLoginAt'])
+@Index(['createdAt'])
 export class UserPostgresEntity {
     @PrimaryGeneratedColumn('uuid')
     id: string;
 
     @Column({ unique: true, length: 255 })
+    @Index()
     email: string;
 
     @Column({ length: 100 })

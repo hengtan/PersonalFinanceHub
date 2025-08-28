@@ -1,0 +1,300 @@
+# tests/performance/artillery/transaction-filters.yml
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3333' }}"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 300
+      arrivalRate: 15
+      name: "Ramp up load"
+    - duration: 600
+      arrivalRate: 25
+      name: "Sustained load"
+    - duration: 300
+      arrivalRate: 50
+      name: "Peak load"
+    - duration: 120
+      arrivalRate: 5
+      name: "Cool down"
+  
+  payload:
+    path: "./test-data/filter-scenarios.csv"
+    fields:
+      - "scenarioType"
+      - "filterParams"
+      - "expectedResults"
+  
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      User-Agent: "Artillery-TransactionFilters-LoadTest"
+  
+  plugins:
+    expect: {}
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+    
+  processor: "./processors/transaction-filters.js"
+
+scenarios:
+  - name: "Complex Transaction Filtering - Sprint 4"
+    weight: 100
+    flow:
+      # Authentication
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "loadtest@example.com"
+            password: "password123"
+          capture:
+            - json: "$.data.tokens.accessToken"
+              as: "accessToken"
+            - json: "$.data.user.id"
+              as: "userId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.tokens.accessToken"
+      
+      # Set authorization header for subsequent requests
+      - function: "setAuthHeader"
+      
+      # Test 1: Date Range Filtering
+      - get:
+          url: "/api/transactions"
+          qs:
+            startDate: "2024-01-01"
+            endDate: "2024-01-31"
+            page: 1
+            limit: 50
+          name: "Filter by Date Range"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.transactions"
+            - contentType: json
+      
+      # Test 2: Amount Range Filtering
+      - get:
+          url: "/api/transactions"
+          qs:
+            minAmount: 100
+            maxAmount: 1000
+            amountOperator: "between"
+            sortBy: "amount"
+            sortOrder: "desc"
+          name: "Filter by Amount Range"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.transactions"
+      
+      # Test 3: Category Filtering with Multiple Categories
+      - get:
+          url: "/api/transactions"
+          qs:
+            categoryIds: "cat-food,cat-transport,cat-housing"
+            dateRange: "last_30_days"
+          name: "Filter by Multiple Categories"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.aggregations"
+      
+      # Test 4: Text Search Across Multiple Fields
+      - get:
+          url: "/api/transactions"
+          qs:
+            searchText: "{{ filterParams }}"
+            searchFields: "description,notes,reference"
+            page: 1
+            limit: 20
+          name: "Text Search Filter"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.transactions"
+      
+      # Test 5: Complex Filter Combination
+      - get:
+          url: "/api/transactions"
+          qs:
+            transactionTypes: "expense"
+            statuses: "completed"
+            currencies: "BRL"
+            hasAttachments: true
+            isFlagged: false
+            dateRange: "this_month"
+            minAmount: 50
+            sortBy: "date"
+            sortOrder: "desc"
+          name: "Complex Filter Combination"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.totalCount"
+      
+      # Test 6: Saved Filter Creation and Usage
+      - post:
+          url: "/api/transactions/filters"
+          json:
+            name: "Large Expenses This Month"
+            description: "Expenses over $500 this month"
+            filters:
+              transactionTypes: ["expense"]
+              minAmount: 500
+              dateRange: "this_month"
+              sortBy: "amount"
+              sortOrder: "desc"
+            isDefault: false
+            tags: ["expenses", "large", "monthly"]
+          name: "Create Saved Filter"
+          capture:
+            - json: "$.data.filter.id"
+              as: "filterId"
+          expect:
+            - statusCode: 201
+            - hasProperty: "data.filter.id"
+      
+      # Test 7: Use Saved Filter
+      - get:
+          url: "/api/transactions"
+          qs:
+            savedFilterId: "{{ filterId }}"
+          name: "Use Saved Filter"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.transactions"
+      
+      # Test 8: Custom Filter with Logical Operators
+      - post:
+          url: "/api/transactions/search"
+          json:
+            customFilters:
+              - field: "amount"
+                operator: "greater_than"
+                value: 200
+                logicalOperator: "AND"
+              - field: "description"
+                operator: "contains"
+                value: "grocery"
+                logicalOperator: "OR"
+              - field: "category"
+                operator: "in"
+                value: ["food", "household"]
+            sortBy: "date"
+            sortOrder: "desc"
+            page: 1
+            limit: 25
+          name: "Custom Logical Filter"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.appliedFilters"
+      
+      # Test 9: Export Filtered Results
+      - post:
+          url: "/api/transactions/export"
+          json:
+            format: "csv"
+            filters:
+              dateRange: "last_7_days"
+              transactionTypes: ["expense"]
+              minAmount: 20
+            includeHeaders: true
+            selectedFields: ["date", "amount", "description", "category"]
+          name: "Export Filtered Transactions"
+          expect:
+            - statusCode: 200
+            - contentType: "text/csv"
+      
+      # Test 10: Aggregated Filter Results
+      - get:
+          url: "/api/transactions/aggregations"
+          qs:
+            dateRange: "this_year"
+            groupBy: "category"
+            includeAggregations: true
+          name: "Aggregated Filter Results"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.categoryBreakdown"
+            - hasProperty: "data.monthlyBreakdown"
+      
+      # Think time between requests
+      - think: 1
+      
+      # Test 11: Filter Performance with Large Dataset
+      - get:
+          url: "/api/transactions"
+          qs:
+            dateRange: "last_year"
+            page: 1
+            limit: 100
+            includeAggregations: true
+          name: "Large Dataset Filter"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data.totalPages"
+      
+      # Test 12: Concurrent Filter Requests
+      - get:
+          url: "/api/transactions"
+          qs:
+            accountIds: "acc-checking,acc-savings"
+            dateRange: "last_30_days"
+          name: "Account Filter"
+          expect:
+            - statusCode: 200
+      
+      - get:
+          url: "/api/transactions"
+          qs:
+            tags: "recurring,subscription"
+            isRecurring: true
+          name: "Recurring Transaction Filter"
+          expect:
+            - statusCode: 200
+      
+      # Test 13: Filter Validation and Error Handling
+      - get:
+          url: "/api/transactions"
+          qs:
+            invalidParam: "test"
+            startDate: "invalid-date"
+            minAmount: "not-a-number"
+          name: "Filter Validation Test"
+          expect:
+            - statusCode: 400
+            - hasProperty: "error"
+      
+      # Cleanup: Delete created saved filter
+      - delete:
+          url: "/api/transactions/filters/{{ filterId }}"
+          name: "Cleanup Saved Filter"
+          expect:
+            - statusCode: 200
+
+# Performance expectations and thresholds
+expect:
+  - statusCode: 200
+  - maxResponseTime: 2000  # 2 seconds max response time
+  - minResponseTime: 10    # Minimum 10ms (sanity check)
+
+# Custom metrics
+metrics:
+  - name: "filter_response_time"
+    unit: "milliseconds"
+    
+  - name: "complex_filter_success_rate"
+    unit: "percent"
+    
+  - name: "aggregation_response_time"
+    unit: "milliseconds"
+
+# Before/After hooks
+before:
+  flow:
+    - log: "🚀 Starting Transaction Filters Performance Test"
+    - log: "📊 Testing Sprint 4 key feature: Advanced Transaction Filtering"
+    - log: "🎯 Target: {{ target }}"
+
+after:
+  flow:
+    - log: "🏁 Transaction Filters Performance Test Completed"
+    - log: "📈 Check detailed metrics for Sprint 4 filtering performance"
+    - function: "generateReport"
